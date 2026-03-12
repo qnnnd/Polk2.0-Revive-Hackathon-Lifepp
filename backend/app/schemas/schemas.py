@@ -4,41 +4,41 @@ Request/response validation and serialization.
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-# ── Base ──────────────────────────────────────────────────────────────────
-
 class BaseSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
-# ── User ──────────────────────────────────────────────────────────────────
+# ── User ──────────────────────────────────────────────────────────────
 
 class UserCreate(BaseSchema):
     did: str
     username: str = Field(min_length=3, max_length=50)
     display_name: Optional[str] = None
     email: Optional[str] = None
+    wallet_address: Optional[str] = None
 
 class UserResponse(BaseSchema):
-    id: uuid.UUID
+    id: str
     did: str
     username: str
     display_name: Optional[str]
+    wallet_address: Optional[str] = None
     cog_balance: float
     created_at: datetime
 
 class UserUpdate(BaseSchema):
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
+    wallet_address: Optional[str] = None
 
 
-# ── Agent ─────────────────────────────────────────────────────────────────
+# ── Agent ─────────────────────────────────────────────────────────────
 
 class AgentCreate(BaseSchema):
     name: str = Field(min_length=1, max_length=100)
@@ -58,17 +58,19 @@ class AgentUpdate(BaseSchema):
     is_public: Optional[bool] = None
 
 class AgentResponse(BaseSchema):
-    id: uuid.UUID
-    owner_id: uuid.UUID
+    id: str
+    owner_id: str
     name: str
     description: Optional[str]
     status: str
     model: str
     capabilities: List[str]
     is_public: bool
+    on_chain_id: Optional[str] = None
     created_at: datetime
     last_active_at: Optional[datetime]
     reputation: Optional[ReputationResponse] = None
+
 
 class AgentListResponse(BaseSchema):
     agents: List[AgentResponse]
@@ -77,17 +79,17 @@ class AgentListResponse(BaseSchema):
     page_size: int
 
 
-# ── Message / Chat ────────────────────────────────────────────────────────
+# ── Message / Chat ────────────────────────────────────────────────────
 
 class ChatRequest(BaseSchema):
     content: str = Field(min_length=1, max_length=32_000)
-    session_id: Optional[uuid.UUID] = None   # None = start new session
+    session_id: Optional[str] = None
     stream: bool = False
 
 class MessageResponse(BaseSchema):
-    id: uuid.UUID
-    agent_id: uuid.UUID
-    session_id: uuid.UUID
+    id: str
+    agent_id: str
+    session_id: str
     role: str
     content: str
     token_count: Optional[int]
@@ -95,13 +97,13 @@ class MessageResponse(BaseSchema):
     created_at: datetime
 
 class ChatResponse(BaseSchema):
-    session_id: uuid.UUID
+    session_id: str
     user_message: MessageResponse
     agent_message: MessageResponse
     memories_used: int = 0
 
 
-# ── Memory ────────────────────────────────────────────────────────────────
+# ── Memory ────────────────────────────────────────────────────────────
 
 class MemoryCreate(BaseSchema):
     content: str = Field(min_length=1)
@@ -111,8 +113,8 @@ class MemoryCreate(BaseSchema):
     is_shared: bool = False
 
 class MemoryResponse(BaseSchema):
-    id: uuid.UUID
-    agent_id: uuid.UUID
+    id: str
+    agent_id: str
     memory_type: str
     content: str
     summary: Optional[str]
@@ -123,7 +125,7 @@ class MemoryResponse(BaseSchema):
     is_shared: bool
     created_at: datetime
     last_accessed_at: datetime
-    relevance_score: Optional[float] = None   # Set during retrieval
+    relevance_score: Optional[float] = None
 
 class MemorySearchRequest(BaseSchema):
     query: str = Field(min_length=1)
@@ -137,7 +139,7 @@ class MemorySearchResponse(BaseSchema):
     total_found: int
 
 
-# ── Task ──────────────────────────────────────────────────────────────────
+# ── Task ──────────────────────────────────────────────────────────────
 
 class TaskCreate(BaseSchema):
     title: str = Field(min_length=1, max_length=200)
@@ -156,8 +158,8 @@ class TaskCreate(BaseSchema):
         return v
 
 class TaskResponse(BaseSchema):
-    id: uuid.UUID
-    agent_id: uuid.UUID
+    id: str
+    agent_id: str
     title: str
     description: Optional[str]
     status: str
@@ -167,6 +169,8 @@ class TaskResponse(BaseSchema):
     error_message: Optional[str]
     steps: List[Dict[str, Any]]
     reward_cog: float
+    escrow_status: str = "none"
+    tx_hash: Optional[str] = None
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     created_at: datetime
@@ -176,7 +180,7 @@ class TaskListResponse(BaseSchema):
     total: int
 
 
-# ── Reputation ────────────────────────────────────────────────────────────
+# ── Reputation ────────────────────────────────────────────────────────
 
 class ReputationResponse(BaseSchema):
     score: float
@@ -187,20 +191,20 @@ class ReputationResponse(BaseSchema):
     endorsements: int
 
 
-# ── Network ───────────────────────────────────────────────────────────────
+# ── Network ───────────────────────────────────────────────────────────
 
 class NetworkNode(BaseSchema):
-    id: uuid.UUID
+    id: str
     name: str
     status: str
     capabilities: List[str]
     reputation_score: float
-    x: Optional[float] = None   # layout coords for visualization
+    x: Optional[float] = None
     y: Optional[float] = None
 
 class NetworkEdge(BaseSchema):
-    from_id: uuid.UUID
-    to_id: uuid.UUID
+    from_id: str
+    to_id: str
     connection_type: str
     strength: float
 
@@ -211,9 +215,40 @@ class NetworkGraphResponse(BaseSchema):
     online_agents: int
 
 
-# ── WebSocket Events ──────────────────────────────────────────────────────
+# ── Marketplace ───────────────────────────────────────────────────────
 
-class WSEvent(BaseSchema):
-    event: str
-    data: Dict[str, Any]
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+class TaskListingCreate(BaseSchema):
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    required_capabilities: List[str] = Field(default_factory=list)
+    reward_cog: float = Field(ge=0.1)
+    deadline_at: Optional[datetime] = None
+
+class TaskListingResponse(BaseSchema):
+    id: str
+    poster_agent_id: str
+    title: str
+    description: str
+    required_capabilities: List[str]
+    reward_cog: float
+    status: str
+    winning_agent_id: Optional[str] = None
+    tx_hash: Optional[str] = None
+    deadline_at: Optional[datetime]
+    created_at: datetime
+
+
+# ── Orchestration ─────────────────────────────────────────────────────
+
+class OrchestrationRequest(BaseSchema):
+    task_description: str
+    strategy: str = "parallel"  # parallel | sequential
+    agent_ids: Optional[List[str]] = None
+    capability_filter: Optional[str] = None
+    max_agents: int = Field(default=3, ge=1, le=10)
+
+class OrchestrationResult(BaseSchema):
+    strategy: str
+    agents_used: List[str]
+    results: List[Dict[str, Any]]
+    total_time_ms: int

@@ -5,7 +5,6 @@ JWT authentication and common dependencies.
 from __future__ import annotations
 
 from typing import Annotated
-from uuid import UUID
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -35,7 +34,7 @@ async def get_current_user(
             settings.JWT_SECRET,
             algorithms=[settings.JWT_ALGORITHM],
         )
-        user_id = UUID(payload["sub"])
+        user_id = payload["sub"]
     except (jwt.PyJWTError, KeyError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -1,6 +1,7 @@
 """
 Life++ — FastAPI Application Entry Point
 Production-grade server with structured logging, CORS, lifespan events.
+SQLite-based storage — zero external dependencies.
 """
 import logging
 from contextlib import asynccontextmanager
@@ -12,12 +13,13 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.db.session import init_db
 from app.api.v1.endpoints.agents import router as agents_router
 from app.api.v1.endpoints.memories import router as memories_router
 from app.api.v1.endpoints.tasks import router as tasks_router
 from app.api.v1.endpoints.network import network_router, auth_router
-
-# ── Logging ──────────────────────────────────────────────────────────────
+from app.api.v1.endpoints.marketplace import router as marketplace_router
+from app.api.v1.endpoints.orchestration import router as orchestration_router
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -26,22 +28,15 @@ logging.basicConfig(
 logger = logging.getLogger("lifeplusplus")
 
 
-# ── Lifespan ──────────────────────────────────────────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application startup/shutdown lifecycle.
-    - Verify DB connectivity
-    - Initialize background task scheduler
-    """
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION} [{settings.ENVIRONMENT}]")
-    # TODO: run Alembic migrations check, initialize Redis pool, start scheduler
+    logger.info(f"Database: {settings.DATABASE_URL}")
+    await init_db()
+    logger.info("Database tables initialized")
     yield
     logger.info("Shutdown complete")
 
-
-# ── App ───────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -51,8 +46,6 @@ app = FastAPI(
     redoc_url="/redoc" if not settings.is_production else None,
     lifespan=lifespan,
 )
-
-# ── Middleware ────────────────────────────────────────────────────────────
 
 app.add_middleware(
     CORSMiddleware,
@@ -66,15 +59,12 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
-    """Attach X-Request-ID to every response for tracing."""
     import uuid
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response
 
-
-# ── Global Exception Handlers ────────────────────────────────────────────
 
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
@@ -85,18 +75,16 @@ async def unhandled_exception(request: Request, exc: Exception):
     )
 
 
-# ── Routers ───────────────────────────────────────────────────────────────
-
 PREFIX = settings.API_V1_PREFIX
 
-app.include_router(auth_router,    prefix=PREFIX)
-app.include_router(agents_router,  prefix=PREFIX)
-app.include_router(memories_router, prefix=PREFIX)
-app.include_router(tasks_router,   prefix=PREFIX)
-app.include_router(network_router, prefix=PREFIX)
+app.include_router(auth_router,          prefix=PREFIX)
+app.include_router(agents_router,        prefix=PREFIX)
+app.include_router(memories_router,      prefix=PREFIX)
+app.include_router(tasks_router,         prefix=PREFIX)
+app.include_router(network_router,       prefix=PREFIX)
+app.include_router(marketplace_router,   prefix=PREFIX)
+app.include_router(orchestration_router, prefix=PREFIX)
 
-
-# ── Health / Root ─────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["System"])
 async def health():
@@ -112,8 +100,6 @@ async def root():
         "tagline": "Peer-to-Peer Cognitive Agent Network",
     }
 
-
-# ── Dev runner ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     uvicorn.run(

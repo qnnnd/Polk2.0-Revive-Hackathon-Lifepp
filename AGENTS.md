@@ -2,41 +2,50 @@
 
 ## Overview
 
-Life++ is a Peer-to-Peer Cognitive Agent Network — a platform for building and networking persistent AI agents with long-term cognitive memory. It consists of a **FastAPI backend** (Python 3.12) and a **Next.js 14 frontend** (TypeScript), backed by PostgreSQL+pgvector and Redis.
+Life++ is a Peer-to-Peer Cognitive Agent Network for the Polkadot Solidity Hackathon 2026. It consists of:
+
+- **Backend**: FastAPI (Python 3.12) with SQLite storage
+- **Frontend**: Next.js 14 (TypeScript, TailwindCSS, React Query v5)
+- **Smart Contracts**: Solidity 0.8.24 (Hardhat) — COGToken, AgentRegistry, TaskMarket, Reputation
 
 ## Cursor Cloud specific instructions
 
+### Quick Start
+
+```bash
+chmod +x scripts/dev-setup.sh && ./scripts/dev-setup.sh
+```
+
 ### Services
 
-| Service | How to run | Port |
-|---------|-----------|------|
-| PostgreSQL+pgvector | `sudo docker start lpp-postgres` (container already created) | 5432 |
-| Redis | `sudo docker start lpp-redis` (container already created) | 6379 |
-| Backend (FastAPI) | `cd /workspace/backend && source .venv/bin/activate && python main.py` | 8000 |
-| Frontend (Next.js) | `cd /workspace/frontend && pnpm dev` | 3000 |
+| Service | Command | Port |
+|---------|---------|------|
+| Backend | `cd backend && source .venv/bin/activate && python main.py` | 8000 |
+| Frontend | `cd frontend && pnpm dev` | 3000 |
+| Hardhat node | `cd contracts && npx hardhat node` | 8545 |
+| Deploy contracts | `cd contracts && npx hardhat run scripts/deploy.js --network localhost` | — |
 
-### Important caveats
+### Key Points
 
-- **Docker daemon**: Must be started before containers: `sudo dockerd &>/tmp/dockerd.log &` — wait a few seconds before running `docker start`.
-- **Database migration**: Run `sudo docker exec -i lpp-postgres psql -U lifeplusplus -d lifeplusplus < /workspace/database/migrations/001_initial_schema.sql` if the database is fresh (idempotent for first run, will error on duplicate types for reruns — safe to ignore).
-- **ENUM types**: The PostgreSQL schema uses custom ENUM types (`agent_status`, `task_status`, `task_priority`, `memory_type`, `message_role`). The SQLAlchemy models must use `Enum(...)` with `create_type=False` to match. Do not use plain `String` columns for these fields.
-- **Demo mode**: The backend runs in demo mode without `ANTHROPIC_API_KEY`. Chat responses are mocked but the full API flow (register, login, create agent, chat, memories, tasks, network) works.
-- **Frontend static assets**: On first page load after starting `pnpm dev`, Next.js compiles pages on demand. The first load may briefly show unstyled content; a refresh resolves it.
+- **No Docker required**: Backend uses SQLite (file `backend/lifeplusplus.db`, auto-created on startup).
+- **No external DB**: All data stored locally in SQLite. Delete `lifeplusplus.db` to reset.
+- **Demo mode**: Without `ANTHROPIC_API_KEY`, chat returns mocked responses. Full API flow still works.
+- **Contract tests**: `cd contracts && npx hardhat test` — runs 7 tests for all 4 contracts.
+- **Lint**: `cd frontend && pnpm lint`
+- **Build**: `cd frontend && pnpm build`
 
-### Lint / Test / Build
+### API Docs
 
-- **Frontend lint**: `cd /workspace/frontend && pnpm lint`
-- **Frontend build**: `cd /workspace/frontend && pnpm build`
-- **Backend import check**: `cd /workspace/backend && source .venv/bin/activate && python -c "import main"`
-- **Backend API docs**: Available at `http://localhost:8000/docs` when the backend is running.
+Backend Swagger UI: `http://localhost:8000/docs` (when backend is running).
 
-### Environment Variables
+### Demo Flow (Spec Section 2.3)
 
-Backend config is in `/workspace/backend/.env`. Key variables:
-- `DATABASE_URL` — async PostgreSQL connection string
-- `REDIS_URL` — Redis connection string
-- `ANTHROPIC_API_KEY` — optional, enables live AI agent responses
-- `SECRET_KEY` / `JWT_SECRET` — app security (dev defaults set)
-
-Frontend config is in `/workspace/frontend/.env.local`:
-- `NEXT_PUBLIC_API_URL=http://localhost:8000`
+The 8-step demo loop can be exercised via the API:
+1. Register user → `POST /api/v1/auth/register`
+2. Create agent → `POST /api/v1/agents`
+3. Chat with agent → `POST /api/v1/agents/{id}/chat`
+4. Store + recall memory → `POST /api/v1/agents/{id}/memories` + `/memories/search`
+5. Publish task → `POST /api/v1/tasks`
+6. Accept task → `POST /api/v1/tasks/{id}/accept`
+7. Complete task → `POST /api/v1/tasks/{id}/complete`
+8. Orchestrate agents → `POST /api/v1/network/orchestrate`

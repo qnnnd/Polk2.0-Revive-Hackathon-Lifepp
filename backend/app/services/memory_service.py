@@ -1,43 +1,37 @@
 """
 Life++ — Memory Service
-Vector-based memory storage, retrieval, and lifecycle management.
+In-memory vector search with cosine similarity (no pgvector dependency).
 """
 from __future__ import annotations
 
+import hashlib
 import math
-import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
-from sqlalchemy import func, select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.models import AgentMemory
-from app.schemas.schemas import MemoryCreate, MemoryResponse
+from app.schemas.schemas import MemoryCreate
 
 
 class MemoryService:
     """
-    Manages the full lifecycle of agent memories:
-    - Storage with embedding generation
-    - Semantic retrieval via cosine similarity
-    - Strength decay (Ebbinghaus forgetting curve)
-    - Consolidation (pruning + association)
+    Manages agent memories with in-memory cosine similarity search.
+    Follows the spec: similarity 50%, importance 30%, recency 20%.
     """
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._embedding_client = None   # Lazy-initialized
-
-    # ── Write ─────────────────────────────────────────────────────────────
 
     async def store(
         self,
-        agent_id: uuid.UUID,
+        agent_id: str,
         data: MemoryCreate,
-        source_task_id: Optional[uuid.UUID] = None,
+        source_task_id: Optional[str] = None,
     ) -> AgentMemory:
         embedding = await self._embed(data.content)
         summary = self._summarize(data.content)
@@ -57,60 +51,54 @@ class MemoryService:
         await self.db.flush()
         return memory
 
-    # ── Read ──────────────────────────────────────────────────────────────
-
     async def search(
         self,
-        agent_id: uuid.UUID,
+        agent_id: str,
         query: str,
         memory_type: Optional[str] = None,
         top_k: int = 5,
         min_strength: float = 0.1,
-    ) -> list[AgentMemory]:
+    ) -> List[AgentMemory]:
         """
-        Retrieve memories by semantic similarity + recency + importance.
-        Uses pgvector cosine distance for fast ANN search.
+        In-memory cosine similarity search with composite ranking:
+        similarity * 0.5 + importance * 0.3 + recency * 0.2
         """
         query_embedding = await self._embed(query)
+        query_vec = np.array(query_embedding, dtype=np.float32)
 
-        q = (
-            select(
-                AgentMemory,
-                (1 - AgentMemory.embedding.cosine_distance(query_embedding)).label("similarity"),
-            )
-            .where(
-                AgentMemory.agent_id == agent_id,
-                AgentMemory.strength >= min_strength,
-            )
-            .order_by(
-                # Composite ranking: similarity + recency + importance
-                (
-                    (1 - AgentMemory.embedding.cosine_distance(query_embedding)) * 0.5
-                    + AgentMemory.importance * 0.3
-                    + func.extract(
-                        "epoch",
-                        AgentMemory.last_accessed_at
-                    ) / 1e9 * 0.2
-                ).desc()
-            )
-            .limit(top_k)
+        q = select(AgentMemory).where(
+            AgentMemory.agent_id == agent_id,
+            AgentMemory.strength >= min_strength,
         )
-
         if memory_type:
             q = q.where(AgentMemory.memory_type == memory_type)
 
         result = await self.db.execute(q)
-        rows = result.all()
+        candidates = list(result.scalars().all())
+
+        now = datetime.now(timezone.utc)
+        scored = []
+        for mem in candidates:
+            if mem.embedding is None:
+                continue
+
+            mem_vec = np.array(mem.embedding, dtype=np.float32)
+            similarity = self._cosine_similarity(query_vec, mem_vec)
+
+            hours_ago = (now - mem.last_accessed_at.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+            recency = max(0, 1.0 - hours_ago / 720)  # decay over 30 days
+
+            composite = similarity * 0.5 + mem.importance * 0.3 + recency * 0.2
+            scored.append((mem, composite, similarity))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        top = scored[:top_k]
 
         memories = []
-        for row in rows:
-            mem = row[0]
-            sim = float(row[1]) if row[1] is not None else 0.0
-            # Attach relevance score as transient attribute
-            mem.__dict__["relevance_score"] = sim
-            # Update access tracking
+        for mem, composite, sim in top:
+            mem.__dict__["relevance_score"] = round(sim, 4)
             mem.access_count += 1
-            mem.last_accessed_at = datetime.now(timezone.utc)
+            mem.last_accessed_at = now
             memories.append(mem)
 
         await self.db.flush()
@@ -118,11 +106,13 @@ class MemoryService:
 
     async def get_all(
         self,
-        agent_id: uuid.UUID,
+        agent_id: str,
         memory_type: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
-    ) -> tuple[list[AgentMemory], int]:
+    ) -> tuple[List[AgentMemory], int]:
+        from sqlalchemy import func
+
         q = select(AgentMemory).where(AgentMemory.agent_id == agent_id)
         if memory_type:
             q = q.where(AgentMemory.memory_type == memory_type)
@@ -134,20 +124,12 @@ class MemoryService:
         q = q.offset((page - 1) * page_size).limit(page_size)
 
         result = await self.db.execute(q)
-        return result.scalars().all(), total
+        return list(result.scalars().all()), total
 
-    # ── Maintenance ───────────────────────────────────────────────────────
-
-    async def consolidate(self, agent_id: uuid.UUID) -> dict:
-        """
-        Memory consolidation pass:
-        1. Apply Ebbinghaus decay to all memories
-        2. Prune memories below survival threshold
-        3. Return consolidation stats
-        """
+    async def consolidate(self, agent_id: str) -> dict:
         q = select(AgentMemory).where(AgentMemory.agent_id == agent_id)
         result = await self.db.execute(q)
-        memories = result.scalars().all()
+        memories = list(result.scalars().all())
 
         pruned = 0
         strengthened = 0
@@ -159,43 +141,47 @@ class MemoryService:
                 access_count=mem.access_count,
                 last_accessed_at=mem.last_accessed_at,
             )
-            mem.strength = new_strength
-
             if new_strength < 0.05 and mem.importance < 0.3:
                 await self.db.delete(mem)
                 pruned += 1
-            elif new_strength > mem.strength:
-                strengthened += 1
+            else:
+                if new_strength > mem.strength:
+                    strengthened += 1
+                mem.strength = new_strength
 
         await self.db.flush()
         return {"pruned": pruned, "strengthened": strengthened, "total": len(memories)}
 
-    # ── Private helpers ───────────────────────────────────────────────────
+    # ── Private helpers ───────────────────────────────────────────────
+
+    @staticmethod
+    def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+        dot = np.dot(a, b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return float(dot / (norm_a * norm_b))
 
     async def _embed(self, text: str) -> list[float]:
         """
-        Generate embedding vector for text.
-        Production: calls OpenAI text-embedding-3-small or Anthropic.
-        Development: deterministic mock using hash projection.
+        Generate embedding vector. Uses OpenAI if available, else deterministic mock.
         """
         if settings.OPENAI_API_KEY:
             try:
                 import openai
                 client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
                 response = await client.embeddings.create(
-                    input=text,
-                    model=settings.EMBEDDING_MODEL,
+                    input=text, model=settings.EMBEDDING_MODEL,
                 )
                 return response.data[0].embedding
             except Exception:
-                pass  # Fall through to mock
+                pass
 
-        # Deterministic mock embedding (1536-dim)
-        import hashlib
+        dim = settings.EMBEDDING_DIM
         seed_bytes = hashlib.sha256(text.encode()).digest()
         rng = np.random.default_rng(list(seed_bytes[:8]))
-        vec = rng.standard_normal(1536).astype(np.float32)
-        # L2 normalize
+        vec = rng.standard_normal(dim).astype(np.float32)
         norm = np.linalg.norm(vec)
         return (vec / norm).tolist() if norm > 0 else vec.tolist()
 
@@ -210,14 +196,12 @@ class MemoryService:
         hours_elapsed = (
             datetime.now(timezone.utc) - last_accessed_at.replace(tzinfo=timezone.utc)
         ).total_seconds() / 3600
-
         stability = importance * (1 + math.log1p(max(access_count, 0)))
         raw = math.exp(-0.01 * hours_elapsed / max(stability, 0.01))
         return max(0.0, min(1.0, raw * importance))
 
     @staticmethod
     def _summarize(content: str, max_length: int = 200) -> str:
-        """Simple extractive summary for storage efficiency."""
         if len(content) <= max_length:
             return content
         return content[:max_length - 3] + "..."
