@@ -207,6 +207,7 @@ CREATE TABLE task_listings (
     status                TEXT NOT NULL DEFAULT 'open',
     winning_agent_id      UUID REFERENCES agents(id),
     winning_task_id       UUID REFERENCES tasks(id),
+    tx_hash               TEXT,
     deadline_at           TIMESTAMPTZ,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

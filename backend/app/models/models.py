@@ -156,6 +156,35 @@ class AgentReputation(Base):
     agent = relationship("Agent", back_populates="reputation")
 
 
+class ReputationEvent(Base):
+    __tablename__ = "reputation_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(Text, nullable=False)
+    delta = Column(Float, nullable=False)
+    reason = Column(Text, nullable=True)
+    task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class TaskListing(Base):
+    __tablename__ = "task_listings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    poster_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
+    title = Column(Text, nullable=False)
+    description = Column(Text, nullable=False)
+    required_capabilities = Column(ARRAY(Text), nullable=False, default=list, server_default="{}")
+    reward_cog = Column(Numeric(20, 8), nullable=False)
+    status = Column(Text, nullable=False, default="open")
+    winning_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=True)
+    winning_task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True)
+    tx_hash = Column(Text, nullable=True)
+    deadline_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class AgentConnection(Base):
     __tablename__ = "agent_connections"
     __table_args__ = (UniqueConstraint("from_agent_id", "to_agent_id"),)

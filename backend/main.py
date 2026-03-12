@@ -16,6 +16,7 @@ from app.api.v1.endpoints.agents import router as agents_router
 from app.api.v1.endpoints.memories import router as memories_router
 from app.api.v1.endpoints.tasks import router as tasks_router
 from app.api.v1.endpoints.network import router as network_router
+from app.api.v1.endpoints.marketplace import router as marketplace_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ app.include_router(agents_router, prefix=settings.API_V1_PREFIX)
 app.include_router(memories_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(network_router, prefix=settings.API_V1_PREFIX)
+app.include_router(marketplace_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/health")

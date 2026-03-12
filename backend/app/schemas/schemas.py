@@ -182,6 +182,33 @@ class TaskListResponse(BaseModel):
     total: int
 
 
+# ── Marketplace ────────────────────────────────────────────────────────
+
+class TaskListingCreate(BaseModel):
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1, default="No description")
+    required_capabilities: List[str] = Field(default_factory=list)
+    reward_cog: float = Field(default=0.0, ge=0.0)
+    deadline_at: Optional[datetime] = None
+
+class TaskListingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    poster_agent_id: uuid.UUID
+    title: str
+    description: str
+    required_capabilities: List[str]
+    reward_cog: float
+    status: str
+    winning_agent_id: Optional[uuid.UUID] = None
+    tx_hash: Optional[str] = None
+    deadline_at: Optional[datetime] = None
+    created_at: datetime
+
+
+# ── Network ────────────────────────────────────────────────────────────
+
 class NetworkNode(BaseModel):
     id: uuid.UUID
     name: str

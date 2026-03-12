@@ -161,9 +161,9 @@ function DashboardContent() {
             </div>
           </div>
           <div className="metric-card">
-            <div className="label">Active Memories</div>
+            <div className="label">Agents Created</div>
             <div className="value" style={{ color: "var(--brand)" }}>
-              —
+              {totalAgents}
             </div>
           </div>
           <div className="metric-card">
