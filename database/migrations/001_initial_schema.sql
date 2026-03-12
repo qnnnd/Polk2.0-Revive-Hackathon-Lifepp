@@ -9,15 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "vector";  -- pgvector for AI embeddings
 
--- ────────────────────────────────────────────────────────────
--- ENUM TYPES
--- ────────────────────────────────────────────────────────────
-
-CREATE TYPE agent_status AS ENUM ('active', 'idle', 'sleeping', 'error', 'terminated');
-CREATE TYPE task_status  AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
-CREATE TYPE task_priority AS ENUM ('low', 'normal', 'high', 'critical');
-CREATE TYPE memory_type  AS ENUM ('episodic', 'semantic', 'procedural', 'social', 'working');
-CREATE TYPE message_role AS ENUM ('user', 'agent', 'system');
+-- NOTE: Using TEXT instead of ENUM types for ORM compatibility.
 
 -- ────────────────────────────────────────────────────────────
 -- USERS
@@ -49,7 +41,7 @@ CREATE TABLE agents (
     owner_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,
     description     TEXT,
-    status          agent_status NOT NULL DEFAULT 'idle',
+    status          TEXT NOT NULL DEFAULT 'idle',
     model           TEXT NOT NULL DEFAULT 'claude-sonnet-4-20250514',
     system_prompt   TEXT,
     personality     JSONB NOT NULL DEFAULT '{}',
@@ -75,7 +67,7 @@ CREATE INDEX idx_agents_is_public   ON agents(is_public) WHERE is_public = true;
 CREATE TABLE agent_memories (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     agent_id      UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    memory_type   memory_type NOT NULL DEFAULT 'episodic',
+    memory_type   TEXT NOT NULL DEFAULT 'episodic',
     content       TEXT NOT NULL,
     summary       TEXT,                          -- LLM-compressed summary
     embedding     vector(1536),                  -- OpenAI/Claude embedding
@@ -107,8 +99,8 @@ CREATE TABLE tasks (
     parent_task_id  UUID REFERENCES tasks(id),   -- For sub-task hierarchies
     title           TEXT NOT NULL,
     description     TEXT,
-    status          task_status NOT NULL DEFAULT 'pending',
-    priority        task_priority NOT NULL DEFAULT 'normal',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    priority        TEXT NOT NULL DEFAULT 'normal',
     input_data      JSONB NOT NULL DEFAULT '{}',
     output_data     JSONB,
     error_message   TEXT,
@@ -136,7 +128,7 @@ CREATE TABLE messages (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     agent_id      UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     session_id    UUID NOT NULL,                 -- Groups messages into conversations
-    role          message_role NOT NULL,
+    role          TEXT NOT NULL,
     content       TEXT NOT NULL,
     tool_calls    JSONB,                         -- LLM tool use payloads
     tool_results  JSONB,
