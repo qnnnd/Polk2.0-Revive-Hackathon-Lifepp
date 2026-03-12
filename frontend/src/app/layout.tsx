@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/ui/Providers";
+import { Sidebar } from "@/components/ui/Sidebar";
 
 export const metadata: Metadata = {
   title: "Life++ | Cognitive Agent Network",
@@ -15,7 +16,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <Providers>{children}</Providers>
+        <Providers>
+          <div className="app">
+            <Sidebar />
+            <main style={{ minHeight: "100vh" }}>{children}</main>
+          </div>
+        </Providers>
       </body>
     </html>
   );
