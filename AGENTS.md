@@ -27,10 +27,10 @@ chmod +x scripts/dev-setup.sh && ./scripts/dev-setup.sh
 
 ### Key Points
 
-- **No Docker required**: Backend uses SQLite (file `backend/lifeplusplus.db`, auto-created on startup).
-- **No external DB**: All data stored locally in SQLite. Delete `lifeplusplus.db` to reset.
+- **PostgreSQL required**: Backend uses PostgreSQL with pgvector extension. Create DB `lifeplusplus` owned by user `lifeplusplus` (password `lifeplusplus`). Enable `vector` extension. Tables are auto-created on first startup via `Base.metadata.create_all`.
+- **DB reset**: Drop and recreate the `lifeplusplus` database, re-enable `CREATE EXTENSION vector`, then restart the backend.
+- **Backend venv**: Python deps are in `backend/.venv`. Activate with `source backend/.venv/bin/activate` before running the backend.
 - **Demo mode**: Without `ANTHROPIC_API_KEY`, chat returns mocked responses. Full API flow still works.
-- **Contract tests**: `cd contracts && npx hardhat test` — runs 7 tests for all 4 contracts.
 - **Lint**: `cd frontend && pnpm lint`
 - **Build**: `cd frontend && pnpm build`
 

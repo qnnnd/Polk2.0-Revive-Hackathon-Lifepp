@@ -1,276 +1,356 @@
-"""
-Life++ — Agent Runtime
-Core AI reasoning loop with memory augmentation and tool use.
-"""
-from __future__ import annotations
-
+import json
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import AsyncGenerator, Optional
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.models import Agent, Message
-from app.schemas.schemas import ChatRequest, ChatResponse, MemoryCreate
+from app.schemas.schemas import MemoryCreate
 from app.services.memory_service import MemoryService
-
-AGENT_TOOLS: list[dict] = [
-    {
-        "name": "search_memory",
-        "description": "Search your persistent memory for relevant information about a topic.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "What to search for in memory"},
-                "memory_type": {
-                    "type": "string",
-                    "enum": ["episodic", "semantic", "procedural", "social"],
-                },
-                "top_k": {"type": "integer", "default": 3},
-            },
-            "required": ["query"],
-        },
-    },
-    {
-        "name": "store_memory",
-        "description": "Store important information in your persistent memory for future use.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "Information to remember"},
-                "memory_type": {
-                    "type": "string",
-                    "enum": ["episodic", "semantic", "procedural", "social"],
-                    "default": "episodic",
-                },
-                "importance": {"type": "number", "default": 0.6},
-                "tags": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["content"],
-        },
-    },
-    {
-        "name": "get_network_agents",
-        "description": "Discover other AI agents on the Life++ network with specific capabilities.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "capability": {"type": "string"},
-                "limit": {"type": "integer", "default": 5},
-            },
-        },
-    },
-]
 
 
 class AgentRuntime:
-    def __init__(self, agent: Agent, db: AsyncSession):
-        self.agent = agent
+    def __init__(self, db: AsyncSession, agent: Agent):
         self.db = db
-        self.memory_svc = MemoryService(db)
-        self._client = None
-        if settings.ANTHROPIC_API_KEY:
-            try:
-                import anthropic
-                self._client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-            except ImportError:
-                pass
-        self._memories_used = 0
+        self.agent = agent
+        self.memory_service = MemoryService(db)
 
-    async def chat(self, request: ChatRequest) -> ChatResponse:
-        session_id = request.session_id or str(uuid.uuid4())
-        start_ts = time.monotonic()
-        self._memories_used = 0
+    async def chat(self, content: str, session_id: Optional[uuid.UUID] = None) -> dict:
+        if session_id is None:
+            session_id = uuid.uuid4()
 
-        history = await self._load_session_history(session_id, limit=20)
-        system_prompt = await self._build_system_prompt()
-        api_messages = self._format_history(history)
-        api_messages.append({"role": "user", "content": request.content})
+        start_time = time.time()
 
-        assistant_content = await self._run_inference(system_prompt, api_messages)
-        latency_ms = int((time.monotonic() - start_ts) * 1000)
-
-        user_msg = Message(
+        user_message = Message(
+            id=uuid.uuid4(),
             agent_id=self.agent.id,
             session_id=session_id,
             role="user",
-            content=request.content,
+            content=content,
         )
-        self.db.add(user_msg)
+        self.db.add(user_message)
+        await self.db.flush()
 
-        agent_msg = Message(
+        history = await self._load_history(session_id)
+        memory_context = await self._get_memory_context(content)
+        memories_used = len(memory_context)
+
+        system_prompt = self._build_system_prompt(memory_context)
+        messages = self._build_messages(history, content)
+
+        response_text = await self._run_inference(system_prompt, messages)
+
+        latency_ms = int((time.time() - start_time) * 1000)
+
+        agent_message = Message(
+            id=uuid.uuid4(),
             agent_id=self.agent.id,
             session_id=session_id,
             role="agent",
-            content=assistant_content,
+            content=response_text,
+            token_count=len(response_text.split()),
             latency_ms=latency_ms,
         )
-        self.db.add(agent_msg)
-
-        await self.memory_svc.store(
-            agent_id=self.agent.id,
-            data=MemoryCreate(
-                content=f"User said: {request.content[:200]}\nI responded: {assistant_content[:200]}",
-                memory_type="episodic",
-                importance=0.5,
-                tags=["conversation"],
-            ),
-        )
-
+        self.db.add(agent_message)
         await self.db.flush()
-        await self.db.refresh(user_msg)
-        await self.db.refresh(agent_msg)
 
-        from app.schemas.schemas import MessageResponse
-        return ChatResponse(
+        await self._store_interaction_memory(content, response_text)
+
+        return {
+            "session_id": session_id,
+            "user_message": user_message,
+            "agent_message": agent_message,
+            "memories_used": memories_used,
+        }
+
+    async def chat_stream(
+        self, content: str, session_id: Optional[uuid.UUID] = None
+    ) -> AsyncGenerator[str, None]:
+        if session_id is None:
+            session_id = uuid.uuid4()
+
+        user_message = Message(
+            id=uuid.uuid4(),
+            agent_id=self.agent.id,
             session_id=session_id,
-            user_message=MessageResponse.model_validate(user_msg),
-            agent_message=MessageResponse.model_validate(agent_msg),
-            memories_used=self._memories_used,
+            role="user",
+            content=content,
         )
+        self.db.add(user_message)
+        await self.db.flush()
 
-    async def chat_stream(self, request: ChatRequest) -> AsyncIterator[str]:
-        history = await self._load_session_history(request.session_id or str(uuid.uuid4()), limit=20)
-        system_prompt = await self._build_system_prompt()
-        api_messages = self._format_history(history)
-        api_messages.append({"role": "user", "content": request.content})
+        memory_context = await self._get_memory_context(content)
+        system_prompt = self._build_system_prompt(memory_context)
+        history = await self._load_history(session_id, exclude_id=user_message.id)
+        messages = self._build_messages(history, content)
 
-        if not self._client:
-            yield "data: [Demo mode — configure ANTHROPIC_API_KEY for live responses]\n\n"
-            yield f"data: I received: '{request.content[:100]}'\n\n"
-            yield "data: [DONE]\n\n"
-            return
+        yield f"data: {json.dumps({'type': 'session', 'session_id': str(session_id)})}\n\n"
 
-        async with self._client.messages.stream(
-            model=self.agent.model,
-            max_tokens=settings.MAX_TOKENS,
-            system=system_prompt,
-            messages=api_messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                yield f"data: {text}\n\n"
-        yield "data: [DONE]\n\n"
+        full_response = ""
 
-    async def _run_inference(
-        self, system: str, messages: list[dict], depth: int = 0, max_depth: int = 5,
-    ) -> str:
-        if not self._client:
-            return self._mock_response(messages[-1]["content"])
+        if settings.ANTHROPIC_API_KEY:
+            try:
+                import anthropic
 
-        if depth >= max_depth:
-            return "I've reached the maximum reasoning depth for this request."
+                client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+                async with client.messages.stream(
+                    model=self.agent.model or "claude-sonnet-4-20250514",
+                    max_tokens=settings.MAX_TOKENS,
+                    system=system_prompt,
+                    messages=messages,
+                ) as stream:
+                    async for text in stream.text_stream:
+                        full_response += text
+                        yield f"data: {json.dumps({'type': 'content', 'text': text})}\n\n"
+            except Exception as e:
+                full_response = f"Error during streaming: {str(e)}"
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        else:
+            mock_response = self._mock_response(content)
+            for word in mock_response.split(" "):
+                chunk = word + " "
+                full_response += chunk
+                yield f"data: {json.dumps({'type': 'content', 'text': chunk})}\n\n"
 
-        response = await self._client.messages.create(
-            model=self.agent.model,
-            max_tokens=settings.MAX_TOKENS,
-            system=system,
-            messages=messages,
-            tools=AGENT_TOOLS,
+        agent_message = Message(
+            id=uuid.uuid4(),
+            agent_id=self.agent.id,
+            session_id=session_id,
+            role="agent",
+            content=full_response.strip(),
+            token_count=len(full_response.split()),
         )
+        self.db.add(agent_message)
+        await self.db.flush()
 
-        if response.stop_reason == "tool_use":
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = await self._execute_tool(block.name, block.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": str(result),
-                    })
-            messages = messages + [
-                {"role": "assistant", "content": response.content},
-                {"role": "user", "content": tool_results},
-            ]
-            return await self._run_inference(system, messages, depth + 1, max_depth)
+        await self._store_interaction_memory(content, full_response.strip())
 
-        for block in response.content:
-            if hasattr(block, "text"):
-                return block.text
-        return ""
+        yield f"data: {json.dumps({'type': 'done', 'message_id': str(agent_message.id)})}\n\n"
 
-    async def _execute_tool(self, name: str, inputs: Dict[str, Any]) -> Any:
-        if name == "search_memory":
-            memories = await self.memory_svc.search(
-                agent_id=self.agent.id,
-                query=inputs["query"],
-                memory_type=inputs.get("memory_type"),
-                top_k=inputs.get("top_k", 3),
-            )
-            self._memories_used += len(memories)
-            return [
-                {"content": m.content, "type": m.memory_type, "importance": m.importance}
-                for m in memories
-            ]
-        elif name == "store_memory":
-            await self.memory_svc.store(
-                agent_id=self.agent.id,
-                data=MemoryCreate(
-                    content=inputs["content"],
-                    memory_type=inputs.get("memory_type", "episodic"),
-                    importance=inputs.get("importance", 0.6),
-                    tags=inputs.get("tags", []),
-                ),
-            )
-            return {"stored": True}
-        elif name == "get_network_agents":
-            from sqlalchemy import select
-            from app.models.models import Agent as AgentModel
-            q = select(AgentModel).where(
-                AgentModel.is_public == True,
-                AgentModel.id != self.agent.id,
-            ).limit(inputs.get("limit", 5))
-            result = await self.db.execute(q)
-            agents = result.scalars().all()
-            return [
-                {"name": a.name, "capabilities": a.capabilities, "status": a.status}
-                for a in agents
-            ]
-        return {"error": f"Unknown tool: {name}"}
-
-    async def _build_system_prompt(self) -> str:
-        base = self.agent.system_prompt or (
-            f"You are {self.agent.name}, a persistent AI agent on the Life++ network. "
-            f"You have long-term memory and can learn and grow over time. "
-            f"Your capabilities: {', '.join(self.agent.capabilities or [])}."
-        )
-        personality = self.agent.personality or {}
-        traits = "\n".join(f"- {k}: {v}" for k, v in personality.items())
-        if traits:
-            base += f"\n\nYour personality traits:\n{traits}"
-        base += (
-            "\n\nYou have access to tools for searching and storing memories. "
-            "Use search_memory to recall relevant past information before responding. "
-            "Use store_memory to remember important facts from this conversation."
-        )
-        return base
-
-    async def _load_session_history(self, session_id: str, limit: int = 20) -> list[Message]:
-        from sqlalchemy import select
-        q = (
+    async def _load_history(
+        self, session_id: uuid.UUID, exclude_id: Optional[uuid.UUID] = None, limit: int = 20
+    ) -> list[Message]:
+        stmt = (
             select(Message)
-            .where(Message.agent_id == self.agent.id, Message.session_id == session_id)
-            .order_by(Message.created_at.asc())
+            .where(
+                Message.agent_id == self.agent.id,
+                Message.session_id == session_id,
+            )
+            .order_by(Message.created_at.desc())
             .limit(limit)
         )
-        result = await self.db.execute(q)
-        return list(result.scalars().all())
+        if exclude_id is not None:
+            stmt = stmt.where(Message.id != exclude_id)
 
-    @staticmethod
-    def _format_history(messages: list[Message]) -> list[dict]:
-        formatted = []
-        for msg in messages:
+        result = await self.db.execute(stmt)
+        messages = list(result.scalars().all())
+        messages.reverse()
+        return messages
+
+    async def _get_memory_context(self, query: str, top_k: int = 3) -> list:
+        try:
+            memories = await self.memory_service.search(
+                agent_id=self.agent.id,
+                query=query,
+                top_k=top_k,
+            )
+            return memories
+        except Exception:
+            return []
+
+    def _build_system_prompt(self, memory_context: list) -> str:
+        base_prompt = self.agent.system_prompt or (
+            f"You are {self.agent.name}, an AI agent in the Life++ network. "
+            "You are helpful, knowledgeable, and collaborative."
+        )
+
+        personality = self.agent.personality or {}
+        if personality:
+            traits = ", ".join(f"{k}: {v}" for k, v in personality.items())
+            base_prompt += f"\n\nPersonality traits: {traits}"
+
+        if memory_context:
+            memory_text = "\n".join(
+                f"- [{m.memory_type}] {m.summary or m.content[:150]}"
+                for m in memory_context
+            )
+            base_prompt += f"\n\nRelevant memories:\n{memory_text}"
+
+        return base_prompt
+
+    def _build_messages(self, history: list[Message], current_content: str) -> list[dict]:
+        messages = []
+        for msg in history:
             role = "user" if msg.role == "user" else "assistant"
-            formatted.append({"role": role, "content": msg.content})
-        return formatted
+            if msg.content:
+                messages.append({"role": role, "content": msg.content})
+        messages.append({"role": "user", "content": current_content})
+        return messages
+
+    async def _run_inference(self, system_prompt: str, messages: list[dict]) -> str:
+        if settings.ANTHROPIC_API_KEY:
+            try:
+                import anthropic
+
+                client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+                tools = [
+                    {
+                        "name": "search_memory",
+                        "description": "Search the agent's memory for relevant information",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query",
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                    {
+                        "name": "store_memory",
+                        "description": "Store new information in the agent's memory",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "description": "The content to store",
+                                },
+                                "importance": {
+                                    "type": "number",
+                                    "description": "Importance score from 0 to 1",
+                                },
+                            },
+                            "required": ["content"],
+                        },
+                    },
+                    {
+                        "name": "get_network_agents",
+                        "description": "Get information about other agents in the Life++ network",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {},
+                        },
+                    },
+                ]
+
+                response = await client.messages.create(
+                    model=self.agent.model or "claude-sonnet-4-20250514",
+                    max_tokens=settings.MAX_TOKENS,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tools,
+                )
+
+                while response.stop_reason == "tool_use":
+                    tool_results = []
+                    for block in response.content:
+                        if block.type == "tool_use":
+                            result = await self._handle_tool_call(
+                                block.name, block.input
+                            )
+                            tool_results.append(
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": json.dumps(result),
+                                }
+                            )
+
+                    messages.append({"role": "assistant", "content": response.content})
+                    messages.append({"role": "user", "content": tool_results})
+
+                    response = await client.messages.create(
+                        model=self.agent.model or "claude-sonnet-4-20250514",
+                        max_tokens=settings.MAX_TOKENS,
+                        system=system_prompt,
+                        messages=messages,
+                        tools=tools,
+                    )
+
+                text_parts = [
+                    block.text for block in response.content if hasattr(block, "text")
+                ]
+                return " ".join(text_parts) if text_parts else "I processed your request."
+
+            except Exception as e:
+                return f"I encountered an issue with the AI service: {str(e)}. Let me respond based on my knowledge."
+
+        return self._mock_response(messages[-1]["content"] if messages else "")
+
+    async def _handle_tool_call(self, tool_name: str, tool_input: dict) -> dict:
+        if tool_name == "search_memory":
+            query = tool_input.get("query", "")
+            memories = await self.memory_service.search(
+                agent_id=self.agent.id, query=query, top_k=3
+            )
+            return {
+                "results": [
+                    {"content": m.content, "importance": m.importance}
+                    for m in memories
+                ]
+            }
+        elif tool_name == "store_memory":
+            content_text = tool_input.get("content", "")
+            importance = tool_input.get("importance", 0.5)
+            memory_data = MemoryCreate(
+                content=content_text, importance=importance
+            )
+            await self.memory_service.store(self.agent.id, memory_data)
+            return {"status": "stored"}
+        elif tool_name == "get_network_agents":
+            from app.services.network_service import NetworkService
+
+            network_svc = NetworkService(self.db)
+            graph = await network_svc.get_graph()
+            return {
+                "agents": [
+                    {"name": n["name"], "status": n["status"]}
+                    for n in graph.get("nodes", [])[:10]
+                ]
+            }
+        return {"error": f"Unknown tool: {tool_name}"}
+
+    async def _store_interaction_memory(self, user_input: str, agent_response: str) -> None:
+        try:
+            summary = f"User asked: {user_input[:100]}. Agent responded: {agent_response[:100]}"
+            memory_data = MemoryCreate(
+                content=summary,
+                memory_type="episodic",
+                importance=0.3,
+                tags=["conversation"],
+            )
+            await self.memory_service.store(self.agent.id, memory_data)
+        except Exception:
+            pass
 
     @staticmethod
     def _mock_response(user_content: str) -> str:
-        return (
-            f"[Demo mode — configure ANTHROPIC_API_KEY for live responses]\n\n"
-            f"I received your message: '{user_content[:100]}'. "
-            f"I'm your persistent AI agent on the Life++ network. "
-            f"I maintain long-term memory and can collaborate with other agents."
-        )
+        content_lower = user_content.lower()
+        if "hello" in content_lower or "hi" in content_lower:
+            return "Hello! I'm an AI agent in the Life++ network. How can I help you today?"
+        elif "help" in content_lower:
+            return (
+                "I can help you with various tasks! I can search my memory, "
+                "store new information, and connect with other agents in the network. "
+                "What would you like to do?"
+            )
+        elif "memory" in content_lower or "remember" in content_lower:
+            return (
+                "I have a sophisticated memory system that allows me to store and recall "
+                "information. I use episodic, semantic, and procedural memory types. "
+                "Would you like me to search for something specific?"
+            )
+        else:
+            return (
+                f"I've processed your message about '{user_content[:50]}'. "
+                "As an AI agent in the Life++ network, I'm here to assist you. "
+                "I can help with tasks, share knowledge, and collaborate with other agents."
+            )

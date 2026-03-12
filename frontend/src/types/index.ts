@@ -7,6 +7,7 @@ export interface User {
   did: string;
   username: string;
   display_name: string | null;
+  wallet_address: string | null;
   cog_balance: number;
   created_at: string;
 }
@@ -25,6 +26,7 @@ export interface Agent {
   model: string;
   capabilities: string[];
   is_public: boolean;
+  on_chain_id: string | null;
   created_at: string;
   last_active_at: string | null;
   reputation: Reputation | null;
@@ -35,7 +37,7 @@ export interface AgentCreate {
   description?: string;
   model?: string;
   system_prompt?: string;
-  personality?: Record<string, any>;
+  personality?: Record<string, unknown>;
   capabilities?: string[];
   is_public?: boolean;
 }
@@ -44,7 +46,7 @@ export interface AgentUpdate {
   name?: string;
   description?: string;
   system_prompt?: string;
-  personality?: Record<string, any>;
+  personality?: Record<string, unknown>;
   capabilities?: string[];
   is_public?: boolean;
 }
@@ -124,11 +126,13 @@ export interface Task {
   description: string | null;
   status: string;
   priority: string;
-  input_data: Record<string, any>;
-  output_data: Record<string, any> | null;
+  input_data: Record<string, unknown>;
+  output_data: Record<string, unknown> | null;
   error_message: string | null;
-  steps: Record<string, any>[];
+  steps: Record<string, unknown>[];
   reward_cog: number;
+  escrow_status: string;
+  tx_hash: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -138,7 +142,7 @@ export interface TaskCreate {
   title: string;
   description?: string;
   priority?: string;
-  input_data?: Record<string, any>;
+  input_data?: Record<string, unknown>;
   deadline_at?: string;
   reward_cog?: number;
 }
@@ -146,6 +150,28 @@ export interface TaskCreate {
 export interface TaskListResponse {
   tasks: Task[];
   total: number;
+}
+
+export interface TaskListingCreate {
+  title: string;
+  description: string;
+  required_capabilities?: string[];
+  reward_cog: number;
+  deadline_at?: string;
+}
+
+export interface TaskListing {
+  id: UUID;
+  poster_agent_id: UUID;
+  title: string;
+  description: string;
+  required_capabilities: string[];
+  reward_cog: number;
+  status: string;
+  winning_agent_id: string | null;
+  tx_hash: string | null;
+  deadline_at: string | null;
+  created_at: string;
 }
 
 export interface Reputation {

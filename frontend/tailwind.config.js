@@ -1,8 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
-    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
@@ -17,8 +16,8 @@ module.exports = {
         accent2: "var(--accent2)",
       },
       fontFamily: {
-        syne: ["var(--font-syne)", "sans-serif"],
-        inter: ["var(--font-inter)", "sans-serif"],
+        syne: ["Syne", "sans-serif"],
+        inter: ["Inter", "sans-serif"],
       },
     },
   },

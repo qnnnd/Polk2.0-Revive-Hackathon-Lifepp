@@ -1,14 +1,12 @@
 """
 Life++ — Database Session Factory
-SQLAlchemy 2.0 async engine with SQLite (aiosqlite).
+SQLAlchemy 2.0 async engine with PostgreSQL (asyncpg).
 """
 from __future__ import annotations
 
-import json
 from typing import Annotated, AsyncGenerator
 
 from fastapi import Depends
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -21,7 +19,6 @@ from app.core.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
-    connect_args={"check_same_thread": False},
 )
 
 async_session_factory = async_sessionmaker(

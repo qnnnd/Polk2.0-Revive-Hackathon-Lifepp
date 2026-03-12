@@ -1,9 +1,3 @@
-/**
- * Life++ API Client
- * Typed HTTP client for all backend endpoints.
- * Uses native fetch with automatic auth header injection.
- */
-
 import type {
   Agent,
   AgentCreate,
@@ -20,13 +14,13 @@ import type {
   Task,
   TaskCreate,
   TaskListResponse,
+  TaskListing,
+  TaskListingCreate,
   User,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const API_V1 = `${API_BASE}/api/v1`;
-
-// ── Auth Token Storage ────────────────────────────────────────────────────
 
 let _accessToken: string | null = null;
 
@@ -46,7 +40,15 @@ export function getAccessToken(): string | null {
   return null;
 }
 
-// ── Core Fetch Wrapper ────────────────────────────────────────────────────
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 
 interface FetchOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
@@ -83,25 +85,15 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
     try {
       const err = await response.json();
       detail = err.detail ?? detail;
-    } catch {}
+    } catch {
+      /* empty */
+    }
     throw new ApiError(detail, response.status);
   }
 
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
-
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
-
-// ── Auth ──────────────────────────────────────────────────────────────────
 
 export const authApi = {
   register: (data: { did: string; username: string; display_name?: string }) =>
@@ -112,13 +104,12 @@ export const authApi = {
     }),
 
   login: (username: string) =>
-    apiFetch<AuthTokenResponse>(`/auth/token?username=${username}`, {
+    apiFetch<AuthTokenResponse>(`/auth/token`, {
       method: "POST",
+      params: { username },
       auth: false,
     }),
 };
-
-// ── Agents ────────────────────────────────────────────────────────────────
 
 export const agentsApi = {
   create: (data: AgentCreate) =>
@@ -128,7 +119,7 @@ export const agentsApi = {
     apiFetch<AgentListResponse>("/agents", { params }),
 
   discover: (params?: { capability?: string; page?: number; page_size?: number }) =>
-    apiFetch<AgentListResponse>("/agents/discover", { params }),
+    apiFetch<AgentListResponse>("/agents/discover", { params, auth: false }),
 
   get: (id: string) =>
     apiFetch<Agent>(`/agents/${id}`),
@@ -142,13 +133,9 @@ export const agentsApi = {
   chat: (id: string, data: ChatRequest) =>
     apiFetch<ChatResponse>(`/agents/${id}/chat`, { method: "POST", body: JSON.stringify(data) }),
 
-  /** Returns an EventSource for streaming responses */
   chatStream: (id: string, content: string, sessionId?: string) => {
     const token = getAccessToken();
-    const url = new URL(`${API_V1}/agents/${id}/chat/stream`);
-    const params = new URLSearchParams({ content, ...(sessionId ? { session_id: sessionId } : {}) });
-    // POST streaming — use fetch with ReadableStream
-    return fetch(`${API_V1}/agents/${id}/chat/stream?${params}`, {
+    return fetch(`${API_V1}/agents/${id}/chat/stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -158,8 +145,6 @@ export const agentsApi = {
     });
   },
 };
-
-// ── Memories ──────────────────────────────────────────────────────────────
 
 export const memoriesApi = {
   store: (agentId: string, data: MemoryCreate) =>
@@ -184,8 +169,6 @@ export const memoriesApi = {
     ),
 };
 
-// ── Tasks ─────────────────────────────────────────────────────────────────
-
 export const tasksApi = {
   create: (agentId: string, data: TaskCreate) =>
     apiFetch<Task>(`/agents/${agentId}/tasks`, { method: "POST", body: JSON.stringify(data) }),
@@ -200,7 +183,22 @@ export const tasksApi = {
     apiFetch<Task>(`/agents/${agentId}/tasks/${taskId}/cancel`, { method: "POST" }),
 };
 
-// ── Network ───────────────────────────────────────────────────────────────
+export const marketplaceApi = {
+  publish: (data: TaskListingCreate) =>
+    apiFetch<TaskListing>("/tasks", { method: "POST", body: JSON.stringify(data) }),
+
+  list: (params?: { status?: string; page?: number; page_size?: number }) =>
+    apiFetch<TaskListing[]>("/tasks", { params }),
+
+  accept: (listingId: string, agentId: string) =>
+    apiFetch<TaskListing>(`/tasks/${listingId}/accept`, {
+      method: "POST",
+      params: { agent_id: agentId },
+    }),
+
+  complete: (listingId: string) =>
+    apiFetch<TaskListing>(`/tasks/${listingId}/complete`, { method: "POST" }),
+};
 
 export const networkApi = {
   graph: () =>

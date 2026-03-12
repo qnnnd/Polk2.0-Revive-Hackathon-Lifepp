@@ -1,31 +1,31 @@
-/**
- * Life++ — React Query Hooks
- * Typed data-fetching hooks with caching, optimistic updates, and pagination.
- */
-
 import {
   useMutation,
   useQuery,
   useQueryClient,
   type UseQueryOptions,
 } from "@tanstack/react-query";
-import { agentsApi, memoriesApi, networkApi, tasksApi, type ApiError } from "@/lib/api";
+import {
+  agentsApi,
+  marketplaceApi,
+  memoriesApi,
+  networkApi,
+  tasksApi,
+} from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import type {
   Agent,
   AgentCreate,
-  AgentListResponse,
   AgentUpdate,
   ChatRequest,
   ChatResponse,
   Memory,
   MemoryCreate,
   MemorySearchRequest,
-  NetworkGraph,
   Task,
   TaskCreate,
+  TaskListing,
+  TaskListingCreate,
 } from "@/types";
-
-// ── Query Keys ────────────────────────────────────────────────────────────
 
 export const queryKeys = {
   agents: {
@@ -42,13 +42,15 @@ export const queryKeys = {
     list: (agentId: string, params?: object) => ["tasks", agentId, params] as const,
     detail: (agentId: string, taskId: string) => ["tasks", agentId, taskId] as const,
   },
+  marketplace: {
+    all: ["marketplace"] as const,
+    list: (params?: object) => ["marketplace", "list", params] as const,
+  },
   network: {
     graph: ["network", "graph"] as const,
     stats: ["network", "stats"] as const,
   },
 } as const;
-
-// ── Agent Hooks ───────────────────────────────────────────────────────────
 
 export function useAgents(params?: { page?: number; page_size?: number }) {
   return useQuery({
@@ -112,13 +114,10 @@ export function useChatWithAgent(agentId: string) {
   return useMutation<ChatResponse, ApiError, ChatRequest>({
     mutationFn: (data) => agentsApi.chat(agentId, data),
     onSuccess: () => {
-      // Refetch agent to get updated last_active_at
       qc.invalidateQueries({ queryKey: queryKeys.agents.detail(agentId) });
     },
   });
 }
-
-// ── Memory Hooks ──────────────────────────────────────────────────────────
 
 export function useMemories(
   agentId: string,
@@ -161,16 +160,14 @@ export function useConsolidateMemories(agentId: string) {
   });
 }
 
-// ── Task Hooks ────────────────────────────────────────────────────────────
-
 export function useTasks(agentId: string, params?: { status?: string; page?: number }) {
   return useQuery({
     queryKey: queryKeys.tasks.list(agentId, params),
     queryFn: () => tasksApi.list(agentId, params),
     enabled: Boolean(agentId),
     refetchInterval: (query) => {
-      // Poll while any task is pending/running
-      const tasks = (query.state.data as any)?.tasks ?? [];
+      const data = query.state.data as { tasks: Task[] } | undefined;
+      const tasks = data?.tasks ?? [];
       const hasActive = tasks.some((t: Task) => ["pending", "running"].includes(t.status));
       return hasActive ? 2_000 : false;
     },
@@ -197,14 +194,50 @@ export function useCancelTask(agentId: string) {
   });
 }
 
-// ── Network Hooks ─────────────────────────────────────────────────────────
+export function useMarketplaceTasks(params?: { status?: string; page?: number }) {
+  return useQuery({
+    queryKey: queryKeys.marketplace.list(params),
+    queryFn: () => marketplaceApi.list(params),
+    staleTime: 15_000,
+  });
+}
+
+export function usePublishTask() {
+  const qc = useQueryClient();
+  return useMutation<TaskListing, ApiError, TaskListingCreate>({
+    mutationFn: (data) => marketplaceApi.publish(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+    },
+  });
+}
+
+export function useAcceptTask() {
+  const qc = useQueryClient();
+  return useMutation<TaskListing, ApiError, { listingId: string; agentId: string }>({
+    mutationFn: ({ listingId, agentId }) => marketplaceApi.accept(listingId, agentId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+    },
+  });
+}
+
+export function useCompleteTask() {
+  const qc = useQueryClient();
+  return useMutation<TaskListing, ApiError, string>({
+    mutationFn: (listingId) => marketplaceApi.complete(listingId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+    },
+  });
+}
 
 export function useNetworkGraph() {
   return useQuery({
     queryKey: queryKeys.network.graph,
     queryFn: networkApi.graph,
     staleTime: 60_000,
-    refetchInterval: 30_000,   // Live refresh every 30s
+    refetchInterval: 30_000,
   });
 }
 
