@@ -1,0 +1,249 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
+import { Topbar } from "@/components/ui/Topbar";
+import {
+  useAgents,
+  useMarketplaceTasks,
+  usePublishTask,
+} from "@/hooks/useApi";
+import { getAccessToken, setAccessToken, authApi } from "@/lib/api";
+import type { TaskListing } from "@/types";
+
+const FILTER_OPTIONS = ["all", "open", "escrowed", "running", "done"] as const;
+
+export default function MarketplacePage() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [username, setUsername] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  useEffect(() => {
+    if (getAccessToken()) setIsLoggedIn(true);
+  }, []);
+
+  const handleLogin = async () => {
+    if (!username.trim()) return;
+    setLoginLoading(true);
+    try {
+      const did = `did:key:${crypto.randomUUID()}`;
+      await authApi.register({ did, username: username.trim(), display_name: username.trim() });
+      const tokenRes = await authApi.login(username.trim());
+      setAccessToken(tokenRes.access_token);
+      setIsLoggedIn(true);
+      toast.success("Welcome to Life++!");
+    } catch (err: any) {
+      if (err.status === 409) {
+        try {
+          const tokenRes = await authApi.login(username.trim());
+          setAccessToken(tokenRes.access_token);
+          setIsLoggedIn(true);
+          toast.success(`Welcome back, ${username}!`);
+        } catch {
+          toast.error("Login failed");
+        }
+      } else {
+        toast.error(err.message ?? "Registration failed");
+      }
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  if (!isLoggedIn) {
+    return (
+      <>
+        <Topbar title="Marketplace" description="Task marketplace and settlement" />
+        <div className="page-content">
+          <div className="login-card">
+            <h2>Life++</h2>
+            <p>Sign in to access the Marketplace</p>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+              placeholder="Choose a username"
+            />
+            <button onClick={handleLogin} disabled={loginLoading || !username.trim()}>
+              {loginLoading ? "Connecting..." : "Enter Life++"}
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  return <MarketplaceContent />;
+}
+
+function MarketplaceContent() {
+  const [filter, setFilter] = useState<string>("all");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [reward, setReward] = useState("");
+
+  const { data: agentsData } = useAgents();
+  const { data: tasks } = useMarketplaceTasks(
+    filter !== "all" ? { status: filter } : undefined
+  );
+  const publishTask = usePublishTask();
+
+  const agents = agentsData?.agents ?? [];
+  const allTasks: TaskListing[] = Array.isArray(tasks) ? tasks : [];
+
+  const handlePublish = async () => {
+    if (!title.trim()) {
+      toast.error("Title is required");
+      return;
+    }
+    try {
+      await publishTask.mutateAsync({
+        title: title.trim(),
+        description: description.trim() || "No description",
+        reward_cog: reward ? parseFloat(reward) : 0,
+      });
+      toast.success("Task published!");
+      setTitle("");
+      setDescription("");
+      setReward("");
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to publish task");
+    }
+  };
+
+  const statusColor = (status: string) => {
+    switch (status) {
+      case "open": return "green";
+      case "escrowed": return "amber";
+      case "running": return "cyan";
+      case "completed": case "done": return "brand2";
+      default: return "";
+    }
+  };
+
+  const progress = (status: string) => {
+    switch (status) {
+      case "open": return 20;
+      case "escrowed": return 40;
+      case "running": return 65;
+      case "completed": case "done": return 100;
+      default: return 10;
+    }
+  };
+
+  return (
+    <>
+      <Topbar title="Marketplace" description="Task marketplace and settlement" />
+      <div className="page-content">
+        <div className="market-layout">
+          {/* Left: Task list */}
+          <div className="card">
+            <h3>Marketplace</h3>
+
+            {/* Create form */}
+            <div style={{ marginBottom: 20, padding: 16, background: "var(--panel-2)", borderRadius: 14, border: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+                <input
+                  className="form-input"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Task title"
+                />
+                <input
+                  className="form-input"
+                  style={{ width: 120, flexShrink: 0 }}
+                  value={reward}
+                  onChange={(e) => setReward(e.target.value)}
+                  placeholder="COG reward"
+                  type="number"
+                  min="0"
+                />
+              </div>
+              <textarea
+                className="form-input"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Task description"
+                rows={2}
+                style={{ resize: "none", marginBottom: 10 }}
+              />
+              <button
+                className="btn-brand"
+                onClick={handlePublish}
+                disabled={publishTask.isPending || !title.trim()}
+              >
+                {publishTask.isPending ? "Publishing..." : "Publish Task"}
+              </button>
+            </div>
+
+            {/* Task items */}
+            {allTasks.length === 0 ? (
+              <p style={{ color: "var(--text-3)", fontSize: 13 }}>No tasks listed yet.</p>
+            ) : (
+              allTasks.map((task) => (
+                <div key={task.id} className="task-item">
+                  <div className="task-head">
+                    <span className="id">#{task.id.slice(0, 8)}</span>
+                    <span className={`tag ${statusColor(task.status)}`}>{task.status}</span>
+                    <span className="tag">{task.reward_cog} COG</span>
+                    {task.winning_agent_id && (
+                      <span className="tag cyan">Agent: {task.winning_agent_id.slice(0, 8)}</span>
+                    )}
+                  </div>
+                  <div className="task-title">{task.title}</div>
+                  {task.description && <div className="task-desc">{task.description}</div>}
+                  <div className="progress-bar">
+                    <div className="fill" style={{ width: `${progress(task.status)}%` }} />
+                  </div>
+                  {task.tx_hash && (
+                    <div className="tx-hash">TX: {task.tx_hash}</div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Right column */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Settlement Status */}
+            <div className="card">
+              <h3>Settlement Status</h3>
+              <div className="status-item">
+                <span className="label">Contract</span>
+                <span className="value" style={{ fontSize: 12, fontFamily: "monospace" }}>
+                  0x7a3b...revive
+                </span>
+              </div>
+              <div className="status-item">
+                <span className="label">Recent TX</span>
+                <span className="value" style={{ fontSize: 12 }}>—</span>
+              </div>
+              <div className="status-item">
+                <span className="label">Constraint</span>
+                <span className="value" style={{ fontSize: 12, color: "var(--amber)" }}>
+                  Testnet Only
+                </span>
+              </div>
+            </div>
+
+            {/* Task Filters */}
+            <div className="card">
+              <h3>Task Filters</h3>
+              <div className="filter-chips">
+                {FILTER_OPTIONS.map((f) => (
+                  <button
+                    key={f}
+                    className={`chip ${filter === f ? "active" : ""}`}
+                    onClick={() => setFilter(f)}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
