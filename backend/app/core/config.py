@@ -33,6 +33,14 @@ class Settings(BaseSettings):
 
     API_V1_PREFIX: str = "/api/v1"
 
+    # Revive testnet (required for 13.4 compliance)
+    REVIVE_RPC_URL: Optional[str] = None
+    COG_TOKEN_ADDRESS: Optional[str] = None
+    AGENT_REGISTRY_ADDRESS: Optional[str] = None
+    TASK_MARKET_ADDRESS: Optional[str] = None
+    REPUTATION_ADDRESS: Optional[str] = None
+    REVIVE_DEPLOYER_PRIVATE_KEY: Optional[str] = None  # for backend-signed txs (agent register, marketplace)
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]
@@ -44,6 +52,16 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
+
+    @property
+    def revive_configured(self) -> bool:
+        return bool(
+            self.REVIVE_RPC_URL
+            and self.COG_TOKEN_ADDRESS
+            and self.AGENT_REGISTRY_ADDRESS
+            and self.TASK_MARKET_ADDRESS
+            and self.REPUTATION_ADDRESS
+        )
 
     class Config:
         env_file = ".env"

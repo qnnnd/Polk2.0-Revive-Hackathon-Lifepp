@@ -84,7 +84,7 @@ cd frontend && pnpm build
 
 ## Known Limitations
 
-1. **Revive testnet contracts**: Not yet deployed. Task marketplace operates as off-chain local MVP. This is documented per hackathon constraint rules (Section 13.4 of tech spec).
+1. **Revive testnet contracts**: Deploy with `pnpm deploy:revive`; backend and frontend integrate via chain config and chain service. Task marketplace, agent registry, and reputation use Revive when configured (13.4 compliant).
 2. **ANTHROPIC_API_KEY**: Without this key, chat returns demo mode responses. Full AI reasoning loop works when key is provided.
 3. **OPENAI_API_KEY**: Without this key, memory embeddings use deterministic mock vectors. Semantic search still works with mock embeddings for demo purposes.
 4. **Multi-agent orchestration**: Implemented at API level but no dedicated frontend page. Can be tested via Swagger UI.

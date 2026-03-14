@@ -210,3 +210,28 @@ export const networkApi = {
       { auth: false }
     ),
 };
+
+export interface ChainConfig {
+  revive_rpc_url: string;
+  chain_id: number | null;
+  task_market_address: string;
+  agent_registry_address: string;
+  cog_token_address: string;
+  reputation_address: string;
+  configured: boolean;
+}
+
+export interface ChainStats {
+  connected: boolean;
+  block_number: number | null;
+  total_agents_on_chain: number | null;
+  configured: boolean;
+}
+
+export const chainApi = {
+  config: () =>
+    apiFetch<ChainConfig>("/chain/config", { auth: false }),
+
+  stats: () =>
+    apiFetch<ChainStats>("/chain/stats", { auth: false }),
+};

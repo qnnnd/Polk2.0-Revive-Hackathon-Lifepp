@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -36,6 +37,7 @@ class User(Base):
     display_name = Column(Text, nullable=True)
     avatar_url = Column(Text, nullable=True)
     public_key = Column(Text, nullable=True)
+    wallet_address = Column(Text, nullable=True)  # EVM address for Revive COG / chain ops
     cog_balance = Column(Numeric(20, 8), nullable=False, default=0, server_default="0")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -60,6 +62,7 @@ class Agent(Base):
     public_key = Column(Text, nullable=True)
     metadata_ = Column("metadata", JSONB, nullable=False, default=dict, server_default="{}")
     is_public = Column(Boolean, nullable=False, default=False, server_default="false")
+    chain_registered_tx_hash = Column(Text, nullable=True)  # AgentRegistry.register tx on Revive
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     last_active_at = Column(DateTime(timezone=True), nullable=True)
@@ -180,6 +183,7 @@ class TaskListing(Base):
     status = Column(Text, nullable=False, default="open")
     winning_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=True)
     winning_task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True)
+    chain_task_id = Column(BigInteger, nullable=True)  # TaskMarket task id on Revive
     tx_hash = Column(Text, nullable=True)
     deadline_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

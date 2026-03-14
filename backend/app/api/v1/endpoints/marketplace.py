@@ -1,9 +1,11 @@
 """
 Life++ API — Marketplace Endpoints
-Global task listing, acceptance, completion.
+Global task listing, acceptance, completion. Revive chain integration (13.4).
 """
+import asyncio
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -13,6 +15,14 @@ from app.api.v1.deps import CurrentUser
 from app.db.session import DBSession
 from app.models.models import Agent, AgentReputation, ReputationEvent, Task, TaskListing, User
 from app.schemas.schemas import TaskListingCreate, TaskListingResponse
+from app.services import chain_service
+
+COG_DECIMALS = 18
+
+
+def _reward_to_wei(reward_cog: float) -> int:
+    return int(Decimal(str(reward_cog)) * (10**COG_DECIMALS))
+
 
 router = APIRouter(prefix="/tasks", tags=["Marketplace"])
 
@@ -36,6 +46,23 @@ async def publish_task(payload: TaskListingCreate, db: DBSession, user: CurrentU
     )
     db.add(listing)
     await db.flush()
+
+    # Revive: create task on chain (escrow COG)
+    reward_wei = _reward_to_wei(payload.reward_cog)
+    if reward_wei > 0:
+        chain_result = await asyncio.to_thread(
+            chain_service.create_task_on_chain,
+            str(poster_agent.id),
+            payload.title,
+            reward_wei,
+        )
+        if chain_result:
+            chain_task_id, tx_hash = chain_result
+            listing.chain_task_id = chain_task_id
+            listing.tx_hash = tx_hash
+            db.add(listing)
+            await db.flush()
+
     await db.refresh(listing)
     return listing
 
@@ -83,6 +110,16 @@ async def accept_task(
     db.add(task)
     await db.flush()
     listing.winning_task_id = task.id
+
+    if listing.chain_task_id is not None:
+        tx_hash = await asyncio.to_thread(
+            chain_service.accept_task_on_chain,
+            listing.chain_task_id,
+            str(agent.id),
+        )
+        if tx_hash:
+            listing.tx_hash = tx_hash
+
     await db.flush()
     await db.refresh(listing)
     return listing
@@ -102,13 +139,24 @@ async def complete_task(listing_id: uuid.UUID, db: DBSession, user: CurrentUser)
             task.status = "completed"
             task.completed_at = datetime.now(timezone.utc)
 
+    if listing.chain_task_id is not None:
+        tx_hash = await asyncio.to_thread(chain_service.complete_task_on_chain, listing.chain_task_id)
+        if tx_hash:
+            listing.tx_hash = tx_hash
+        if listing.winning_agent_id:
+            reward_wei = _reward_to_wei(float(listing.reward_cog))
+            await asyncio.to_thread(
+                chain_service.record_reputation_task_complete,
+                str(listing.winning_agent_id),
+                reward_wei,
+            )
+
     if listing.winning_agent_id:
         rep = (await db.execute(
             select(AgentReputation).where(AgentReputation.agent_id == listing.winning_agent_id)
         )).scalar_one_or_none()
         if rep:
             rep.tasks_completed += 1
-            from decimal import Decimal
             rep.total_cog_earned += Decimal(str(listing.reward_cog))
             rep.score = min(5.0, rep.score + 0.1)
 

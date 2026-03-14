@@ -169,6 +169,7 @@ export interface TaskListing {
   reward_cog: number;
   status: string;
   winning_agent_id: string | null;
+  chain_task_id: number | null;
   tx_hash: string | null;
   deadline_at: string | null;
   created_at: string;

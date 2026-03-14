@@ -19,6 +19,7 @@ class UserResponse(BaseModel):
     did: str
     username: str
     display_name: Optional[str] = None
+    wallet_address: Optional[str] = None
     cog_balance: float
     created_at: datetime
 
@@ -202,6 +203,7 @@ class TaskListingResponse(BaseModel):
     reward_cog: float
     status: str
     winning_agent_id: Optional[uuid.UUID] = None
+    chain_task_id: Optional[int] = None
     tx_hash: Optional[str] = None
     deadline_at: Optional[datetime] = None
     created_at: datetime

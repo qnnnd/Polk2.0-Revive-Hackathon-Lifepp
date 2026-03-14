@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Topbar } from "@/components/ui/Topbar";
 import {
   useAgents,
+  useChainConfig,
   useMarketplaceTasks,
   usePublishTask,
 } from "@/hooks/useApi";
@@ -83,6 +84,7 @@ function MarketplaceContent() {
   const [reward, setReward] = useState("");
 
   const { data: agentsData } = useAgents();
+  const { data: chainConfig } = useChainConfig();
   const { data: tasks } = useMarketplaceTasks(
     filter !== "all" ? { status: filter } : undefined
   );
@@ -205,18 +207,25 @@ function MarketplaceContent() {
 
           {/* Right column */}
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {/* Settlement Status */}
+            {/* Settlement Status — from Revive API (13.4: no fake chain data) */}
             <div className="card">
               <h3>Settlement Status</h3>
               <div className="status-item">
                 <span className="label">Contract</span>
                 <span className="value" style={{ fontSize: 12, fontFamily: "monospace" }}>
-                  0x7a3b...revive
+                  {chainConfig?.task_market_address
+                    ? `${chainConfig.task_market_address.slice(0, 6)}…${chainConfig.task_market_address.slice(-6)}`
+                    : "—"}
                 </span>
               </div>
               <div className="status-item">
                 <span className="label">Recent TX</span>
-                <span className="value" style={{ fontSize: 12 }}>—</span>
+                <span className="value" style={{ fontSize: 12 }}>
+                  {(() => {
+                    const recentTx = allTasks.find((t) => t.tx_hash)?.tx_hash;
+                    return recentTx ? `${recentTx.slice(0, 10)}…` : "—";
+                  })()}
+                </span>
               </div>
               <div className="status-item">
                 <span className="label">Constraint</span>

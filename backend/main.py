@@ -13,6 +13,7 @@ from app.db.session import init_db
 
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.agents import router as agents_router
+from app.api.v1.endpoints.chain import router as chain_router
 from app.api.v1.endpoints.memories import router as memories_router
 from app.api.v1.endpoints.tasks import router as tasks_router
 from app.api.v1.endpoints.network import router as network_router
@@ -75,6 +76,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(agents_router, prefix=settings.API_V1_PREFIX)
+app.include_router(chain_router, prefix=settings.API_V1_PREFIX)
 app.include_router(memories_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tasks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(network_router, prefix=settings.API_V1_PREFIX)

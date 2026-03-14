@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Optional
 
@@ -14,8 +15,10 @@ from app.schemas.schemas import (
     AgentUpdate,
     ChatRequest,
     ChatResponse,
+    ReputationResponse,
 )
 from app.services.agent_service import AgentService
+from app.services import chain_service
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -24,6 +27,18 @@ router = APIRouter(prefix="/agents", tags=["Agents"])
 async def create_agent(data: AgentCreate, db: DBSession, user: CurrentUser):
     service = AgentService(db)
     agent = await service.create(user.id, data)
+    # Register on Revive AgentRegistry (13.4: must use Revive)
+    tx_hash = await asyncio.to_thread(
+        chain_service.register_agent,
+        str(agent.id),
+        agent.name,
+        "",  # metadata URI placeholder
+    )
+    if tx_hash:
+        agent.chain_registered_tx_hash = tx_hash
+        db.add(agent)
+        await db.flush()
+        await db.refresh(agent)
     return agent
 
 
@@ -57,7 +72,19 @@ async def get_agent(agent_id: uuid.UUID, db: DBSession):
     agent = await service.get_by_id(agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    return agent
+    response = AgentResponse.model_validate(agent)
+    # Overlay Revive chain reputation when available (13.4)
+    chain_rep = await asyncio.to_thread(chain_service.reputation_for_ui, str(agent.id))
+    if chain_rep:
+        response.reputation = ReputationResponse(
+            score=chain_rep["score"],
+            tasks_completed=chain_rep["tasks_completed"],
+            tasks_failed=chain_rep["tasks_failed"],
+            avg_quality_score=chain_rep["score"],
+            total_cog_earned=chain_rep["total_cog_earned"],
+            endorsements=chain_rep["endorsements"],
+        )
+    return response
 
 
 @router.patch("/{agent_id}", response_model=AgentResponse)

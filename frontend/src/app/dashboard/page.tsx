@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Topbar } from "@/components/ui/Topbar";
 import {
   useAgents,
+  useChainStats,
   useCreateAgent,
   useNetworkStats,
   useMarketplaceTasks,
@@ -83,6 +84,7 @@ export default function DashboardPage() {
 function DashboardContent() {
   const { data: agentsData } = useAgents();
   const { data: stats } = useNetworkStats();
+  const { data: chainStats } = useChainStats();
   const { data: marketTasks } = useMarketplaceTasks();
   const createAgent = useCreateAgent();
 
@@ -130,23 +132,34 @@ function DashboardContent() {
             </div>
           </div>
           <div className="hero-card">
-            <h3 style={{ fontSize: 16 }}>Testnet Status</h3>
+            <h3 style={{ fontSize: 16 }}>Revive Testnet Status</h3>
             <div style={{ marginTop: 16 }}>
               <div className="status-item">
-                <span className="label">Network</span>
-                <span className="value" style={{ color: "var(--green)" }}>
-                  ● Online
+                <span className="label">Revive</span>
+                <span
+                  className="value"
+                  style={{
+                    color: chainStats?.connected ? "var(--green)" : "var(--text-3)",
+                  }}
+                >
+                  {chainStats?.configured
+                    ? chainStats.connected
+                      ? "● Online"
+                      : "● Offline"
+                    : "Not configured"}
                 </span>
               </div>
               <div className="status-item">
                 <span className="label">Health</span>
                 <span className="value" style={{ color: "var(--green)" }}>
-                  {stats?.network_health ?? "healthy"}
+                  {chainStats?.connected ? "connected" : stats?.network_health ?? "—"}
                 </span>
               </div>
               <div className="status-item">
-                <span className="label">Agents Registered</span>
-                <span className="value">{stats?.total_agents ?? totalAgents}</span>
+                <span className="label">Agents on chain</span>
+                <span className="value">
+                  {chainStats?.total_agents_on_chain ?? stats?.total_agents ?? totalAgents}
+                </span>
               </div>
             </div>
           </div>

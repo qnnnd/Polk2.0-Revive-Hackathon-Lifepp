@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import {
   agentsApi,
+  chainApi,
   marketplaceApi,
   memoriesApi,
   networkApi,
@@ -49,6 +50,10 @@ export const queryKeys = {
   network: {
     graph: ["network", "graph"] as const,
     stats: ["network", "stats"] as const,
+  },
+  chain: {
+    config: ["chain", "config"] as const,
+    stats: ["chain", "stats"] as const,
   },
 } as const;
 
@@ -247,5 +252,24 @@ export function useNetworkStats() {
     queryFn: networkApi.stats,
     staleTime: 30_000,
     refetchInterval: 15_000,
+  });
+}
+
+export function useChainConfig() {
+  return useQuery({
+    queryKey: queryKeys.chain.config,
+    queryFn: chainApi.config,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function useChainStats() {
+  return useQuery({
+    queryKey: queryKeys.chain.stats,
+    queryFn: chainApi.stats,
+    staleTime: 15_000,
+    refetchInterval: 20_000,
+    retry: false,
   });
 }
