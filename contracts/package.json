@@ -7,6 +7,7 @@
     "test": "npx hardhat test",
     "deploy:local": "npx hardhat run scripts/deploy.js --network localhost",
     "deploy:revive": "npx hardhat run scripts/deploy.js --network revive",
+    "deploy:revive-local": "npx hardhat run scripts/deploy.js --network revive-local",
     "node": "npx hardhat node"
   },
   "devDependencies": {

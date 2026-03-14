@@ -18,9 +18,19 @@ COG_DECIMALS = 18
 
 
 def _w3() -> Optional[Web3]:
-    if not settings.REVIVE_RPC_URL:
+    """
+    Web3 provider factory.
+
+    In development:
+    - Default to local Revive node at http://127.0.0.1:8545 when REVIVE_RPC_URL is unset.
+    - Never fall back to a remote Revive RPC; that is blocked at config level.
+    """
+    url: Optional[str] = settings.REVIVE_RPC_URL
+    if settings.is_development and (not url or not url.strip()):
+        url = "http://127.0.0.1:8545"
+    if not url:
         return None
-    return Web3(Web3.HTTPProvider(settings.REVIVE_RPC_URL))
+    return Web3(Web3.HTTPProvider(url))
 
 
 def is_connected() -> bool:

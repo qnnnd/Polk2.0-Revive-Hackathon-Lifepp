@@ -5,9 +5,19 @@
 - Docker + Docker Compose
 - Python 3.12+
 - Node.js 18+ with pnpm
-- **Revive testnet**: RPC URL and deployer wallet with COG for on-chain flows (required for 13.4 / "必须使用 Revive")
+- **Revive**: Either (A) **local Revive node** (revive-dev-node + eth-rpc) or (B) **Revive testnet** RPC + deployer wallet (required for 13.4 / "必须使用 Revive")
 
-## Deploy contracts to Revive (required for full demo)
+## Option A: Local Revive node (本地跑 Revive 节点，不得使用虚构数据)
+
+Full steps: **[docs/revive-local-setup.md](revive-local-setup.md)**.
+
+1. Build and run **revive-dev-node** and **eth-rpc** (Ethereum RPC at http://127.0.0.1:8545).
+2. Deploy contracts: `cd contracts && pnpm run deploy:revive-local` (use a key with balance on the local node).
+3. Apply addresses to backend: `./scripts/apply-revive-local-env.sh`
+4. Start app (Postgres, Redis, backend, frontend) and run the demo flow. All chain data comes from local Revive — no fake data.
+5. **Verify data**: `./scripts/verify-chain-data.sh` or `cd backend && python -m pytest tests/test_chain_verification.py -v`
+
+## Option B: Deploy contracts to Revive testnet (remote)
 
 1. In `contracts/`, set env:
    - `REVIVE_RPC_URL` (default: https://rpc.revive.network)
@@ -113,12 +123,10 @@ Interactive Swagger UI: http://localhost:8000/docs
 | GET | /api/v1/chain/stats | Revive chain stats (agents on chain, block) |
 | GET | /api/v1/chain/balance | Current user COG balance from chain (auth) |
 
-## Verify chain data in UI (13.4)
+## Verify chain data (no fake data)
 
-- **Marketplace**: "Contract" and "Recent TX" come from API (no hardcoded values). Task tx_hash is set only from real Revive txs.
-- **Dashboard**: "Revive Testnet Status" shows Revive connection and "Agents on chain" from AgentRegistry.
-- **Agent detail & Network**: Reputation (score, tasks completed) is from Revive Reputation contract when configured.
-- **COG balance**: GET /api/v1/chain/balance returns chain-derived balance when user has wallet_address set.
+- **After demo (required)**: Run `./scripts/verify-chain-data.sh` or `cd backend && python -m pytest tests/test_chain_verification.py -v` to confirm backend reads real chain state (connect, AgentRegistry, TaskMarket, Reputation, COG).
+- **In UI (13.4)**: Marketplace "Contract" and "Recent TX" from API; Dashboard "Revive Testnet Status" and "Agents on chain" from chain; agent/network reputation from Revive; COG balance from chain when wallet set.
 
 ## Notes
 

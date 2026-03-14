@@ -4,7 +4,7 @@ Pydantic Settings for 12-factor config from environment variables.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic_settings import BaseSettings
 
@@ -62,6 +62,24 @@ class Settings(BaseSettings):
             and self.TASK_MARKET_ADDRESS
             and self.REPUTATION_ADDRESS
         )
+
+    def model_post_init(self, __context: Any) -> None:
+        """
+        Enforce local-node-only usage in development.
+        In development, REVIVE_RPC_URL (if set) must point to a local Revive node
+        and must not be configured to a remote testnet endpoint.
+        """
+        if self.is_development and self.REVIVE_RPC_URL:
+            url = self.REVIVE_RPC_URL.strip()
+            if not (
+                url.startswith("http://127.0.0.1:8545")
+                or url.startswith("http://localhost:8545")
+            ):
+                raise ValueError(
+                    "In development, REVIVE_RPC_URL must point to a local Revive node "
+                    "(http://127.0.0.1:8545 or http://localhost:8545). "
+                    "Do not use remote Revive RPC in local environment."
+                )
 
     class Config:
         env_file = ".env"
