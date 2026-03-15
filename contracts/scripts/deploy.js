@@ -7,37 +7,28 @@ async function main() {
   console.log("Deploying contracts with:", deployer.address);
   console.log("Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)));
 
-  // 1. Deploy COGToken
-  const COGToken = await ethers.getContractFactory("COGToken");
-  const cogToken = await COGToken.deploy();
-  await cogToken.waitForDeployment();
-  const cogAddr = await cogToken.getAddress();
-  console.log("COGToken deployed to:", cogAddr);
-
-  // 2. Deploy AgentRegistry
+  // 1. Deploy AgentRegistry
   const AgentRegistry = await ethers.getContractFactory("AgentRegistry");
   const registry = await AgentRegistry.deploy();
   await registry.waitForDeployment();
   const regAddr = await registry.getAddress();
   console.log("AgentRegistry deployed to:", regAddr);
 
-  // 3. Deploy TaskMarket
+  // 2. Deploy TaskMarket (native IVE escrow, no COG)
   const TaskMarket = await ethers.getContractFactory("TaskMarket");
-  const taskMarket = await TaskMarket.deploy(cogAddr);
+  const taskMarket = await TaskMarket.deploy();
   await taskMarket.waitForDeployment();
   const tmAddr = await taskMarket.getAddress();
   console.log("TaskMarket deployed to:", tmAddr);
 
-  // 4. Deploy Reputation
+  // 3. Deploy Reputation
   const Reputation = await ethers.getContractFactory("Reputation");
   const reputation = await Reputation.deploy();
   await reputation.waitForDeployment();
   const repAddr = await reputation.getAddress();
   console.log("Reputation deployed to:", repAddr);
 
-  // Save deployment addresses
   const addresses = {
-    COGToken: cogAddr,
     AgentRegistry: regAddr,
     TaskMarket: tmAddr,
     Reputation: repAddr,

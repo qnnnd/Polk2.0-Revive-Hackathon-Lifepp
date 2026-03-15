@@ -84,7 +84,7 @@ Then run `pnpm run deploy:revive-local` (no claim step).
 
 **If deploy still fails with "Balance: 0" or "Invalid Transaction"**: the Revive dev node has not funded that EVM account. You can: (1) Use a chain spec that endows and maps an EVM account (see [Polkadot SDK genesis config](https://github.com/paritytech/polkadot-sdk/pull/8103)); or (2) Fund an account via the node, then set that key in `contracts/.env` as `DEPLOYER_PRIVATE_KEY`.
 
-This writes `contracts/deployments.json` with COGToken, AgentRegistry, TaskMarket, Reputation addresses.
+This writes `contracts/deployments.json` with AgentRegistry, TaskMarket, Reputation addresses (rewards use native IVE).
 
 ## 5. Apply Addresses to Backend (local Revive)
 
@@ -97,10 +97,10 @@ From repo root:
 This sets in `backend/.env`:
 
 - `REVIVE_RPC_URL=http://127.0.0.1:8545`
-- `COG_TOKEN_ADDRESS`, `AGENT_REGISTRY_ADDRESS`, `TASK_MARKET_ADDRESS`, `REPUTATION_ADDRESS` from `contracts/deployments.json`
+- `AGENT_REGISTRY_ADDRESS`, `TASK_MARKET_ADDRESS`, `REPUTATION_ADDRESS` from `contracts/deployments.json`
 - `REVIVE_DEPLOYER_PRIVATE_KEY` from your `DEPLOYER_PRIVATE_KEY` (so backend can register agents and run marketplace on local Revive)
 
-Ensure the same key has COG on the local chain (deployer receives initial COG supply from COGToken deployment).
+Ensure the deployer account has enough native IVE on the local chain for task rewards and gas.
 
 ## 6. Start App and Run Demo
 

@@ -1,12 +1,11 @@
 """
 Life++ — Revive testnet chain service (read-only + optional writes).
-Uses web3.py to call COGToken, AgentRegistry, TaskMarket, Reputation contracts.
+Uses web3.py for AgentRegistry, TaskMarket (native IVE), Reputation.
 All chain-derived data for 13.4 compliance must go through this service.
 """
 from __future__ import annotations
 
 import logging
-import time
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -17,8 +16,8 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# COG has 18 decimals (wei)
-COG_DECIMALS = 18
+# Native IVE (same decimals as ETH)
+IVE_DECIMALS = 18
 
 
 def _w3() -> Optional[Web3]:
@@ -67,10 +66,6 @@ def get_block_number() -> Optional[int]:
 
 
 # Minimal ABIs (view + write)
-ABI_COG = [
-    {"inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
-]
 ABI_AGENT_REGISTRY = [
     {"inputs": [{"name": "agentId", "type": "string"}], "name": "getAgent", "outputs": [
         {"name": "owner", "type": "address"},
@@ -103,7 +98,7 @@ ABI_TASK_MARKET = [
         {"name": "completedAt", "type": "uint256"},
     ], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "nextTaskId", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
-    {"inputs": [{"name": "posterAgentId", "type": "string"}, {"name": "title", "type": "string"}, {"name": "rewardAmount", "type": "uint256"}], "name": "createTask", "outputs": [{"type": "uint256"}], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "posterAgentId", "type": "string"}, {"name": "title", "type": "string"}, {"name": "rewardAmount", "type": "uint256"}], "name": "createTask", "outputs": [{"type": "uint256"}], "stateMutability": "payable", "type": "function"},
     {"inputs": [{"name": "taskId", "type": "uint256"}, {"name": "acceptorAgentId", "type": "string"}, {"name": "rewardRecipient", "type": "address"}], "name": "acceptTask", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
     {"inputs": [{"name": "taskId", "type": "uint256"}], "name": "completeTask", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
 ]
@@ -121,16 +116,15 @@ ABI_REPUTATION = [
 
 
 def balance_of(address: str) -> Optional[Decimal]:
-    """COGToken.balanceOf(account) in human COG (not wei)."""
-    if not settings.revive_configured or not settings.COG_TOKEN_ADDRESS:
+    """Native IVE balance of address in human units (not wei)."""
+    if not settings.revive_configured:
         return None
     w3 = _w3()
     if not w3 or not address:
         return None
     try:
-        contract = w3.eth.contract(address=Web3.to_checksum_address(settings.COG_TOKEN_ADDRESS), abi=ABI_COG)
-        wei = contract.functions.balanceOf(Web3.to_checksum_address(address)).call()
-        return Decimal(wei) / (10**COG_DECIMALS)
+        wei = w3.eth.get_balance(Web3.to_checksum_address(address))
+        return Decimal(wei) / (10**IVE_DECIMALS)
     except Exception:
         return None
 
@@ -188,7 +182,7 @@ def get_task(task_id: int) -> Optional[dict[str, Any]]:
             "posterAgentId": raw[2],
             "title": raw[3],
             "rewardAmount": raw[4],
-            "reward_cog": float(Decimal(raw[4]) / (10**COG_DECIMALS)),
+            "reward_cog": float(Decimal(raw[4]) / (10**IVE_DECIMALS)),
             "status": status_map.get(raw[5], "unknown"),
             "status_raw": int(raw[5]),
             "acceptor": raw[6],
@@ -261,7 +255,7 @@ def reputation_for_ui(agent_id: str) -> Optional[dict[str, Any]]:
         "score": score if score is not None else 0.0,
         "tasks_completed": int(rep["tasksCompleted"]) if rep else 0,
         "tasks_failed": int(rep["tasksFailed"]) if rep else 0,
-        "total_cog_earned": float(Decimal(rep["totalCogEarned"]) / (10**COG_DECIMALS)) if rep else 0.0,
+        "total_cog_earned": float(Decimal(rep["totalCogEarned"]) / (10**IVE_DECIMALS)) if rep else 0.0,
         "endorsements": int(rep["endorsements"]) if rep else 0,
     }
 
@@ -279,36 +273,33 @@ def _get_deployer_account():
         return None
 
 
-def deployer_cog_balance_wei() -> Optional[int]:
-    """COG balance of the deployer account in wei. Returns None if not configured or RPC error."""
+def deployer_native_balance_wei() -> Optional[int]:
+    """Native IVE balance of the deployer account in wei. Returns None if not configured or RPC error."""
     account = _get_deployer_account()
     if not account:
         return None
-    if not settings.revive_configured or not settings.COG_TOKEN_ADDRESS:
+    if not settings.revive_configured:
         return None
     w3 = _w3()
     if not w3:
         return None
     try:
-        contract = w3.eth.contract(
-            address=Web3.to_checksum_address(settings.COG_TOKEN_ADDRESS), abi=ABI_COG
-        )
-        return contract.functions.balanceOf(Web3.to_checksum_address(account.address)).call()
+        return w3.eth.get_balance(Web3.to_checksum_address(account.address))
     except Exception:
         return None
 
 
-def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, args: tuple, gas: int = 300_000) -> Optional[str]:
-    """Build, sign, send tx; return tx_hash hex or None. Sets chainId and gasPrice for Substrate/Frontier."""
+def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, args: tuple, gas: int = 300_000, value_wei: int = 0) -> Optional[str]:
+    """Build, sign, send tx; return tx_hash hex or None. value_wei for payable (e.g. createTask with IVE)."""
     try:
         contract = w3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=abi)
         fn = getattr(contract.functions, fn_name)(*args)
         chain_id = w3.eth.chain_id
         gas_price = w3.eth.gas_price
+        base = {"from": account.address, "gas": gas, "chainId": chain_id, "value": value_wei}
         if gas_price and gas_price > 0:
-            tx = fn.build_transaction({"from": account.address, "gas": gas, "chainId": chain_id, "gasPrice": gas_price})
-        else:
-            tx = fn.build_transaction({"from": account.address, "gas": gas, "chainId": chain_id})
+            base["gasPrice"] = gas_price
+        tx = fn.build_transaction(base)
         tx["nonce"] = w3.eth.get_transaction_count(account.address)
         signed = account.sign_transaction(tx)
         tx_hash_bytes = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -316,16 +307,6 @@ def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, 
     except (ContractLogicError, ValueError, Exception) as e:
         logger.warning("_send_tx %s(%s) failed: %s", fn_name, contract_address[:10], e)
         return None
-
-
-def _wait_for_receipt(w3: Web3, tx_hash_hex: str, timeout_seconds: int = 60) -> bool:
-    """Wait for tx to be mined. Returns True if receipt status is success, False on timeout or failure."""
-    try:
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash_hex, timeout=timeout_seconds)
-        return receipt.get("status") == 1
-    except Exception as e:
-        logger.warning("_wait_for_receipt %s: %s", tx_hash_hex[:18], e)
-        return False
 
 
 def register_agent(agent_id: str, name: str, metadata_uri: str = "") -> Optional[str]:
@@ -345,54 +326,30 @@ def register_agent(agent_id: str, name: str, metadata_uri: str = "") -> Optional
     )
 
 
-def approve_cog(spender: str, amount_wei: int) -> Optional[str]:
-    """COGToken.approve(spender, amount). Returns tx_hash or None."""
-    if not settings.revive_configured or not settings.COG_TOKEN_ADDRESS:
-        return None
-    account = _get_deployer_account()
-    w3 = _w3()
-    if not account or not w3:
-        return None
-    return _send_tx(
-        w3, account, settings.COG_TOKEN_ADDRESS, ABI_COG,
-        "approve", (Web3.to_checksum_address(spender), amount_wei), 100_000,
-    )
-
-
 def create_task_on_chain(poster_agent_id: str, title: str, reward_wei: int) -> Optional[tuple[int, str]]:
     """
-    Approve TaskMarket to spend COG, then TaskMarket.createTask. Returns (chain_task_id, tx_hash) or None.
-    Uses deployer as escrow payer.
+    TaskMarket.createTask with native IVE (msg.value). Returns (chain_task_id, tx_hash) or None.
+    Uses deployer as escrow payer; deployer must have enough IVE for reward + gas.
     """
-    if not settings.revive_configured or not settings.TASK_MARKET_ADDRESS or not settings.COG_TOKEN_ADDRESS:
-        logger.warning("create_task_on_chain: skip (revive not configured or missing TASK_MARKET/COG_TOKEN)")
+    if not settings.revive_configured or not settings.TASK_MARKET_ADDRESS:
+        logger.warning("create_task_on_chain: skip (revive not configured or missing TASK_MARKET)")
         return None
     account = _get_deployer_account()
     w3 = _w3()
     if not account or not w3:
-        logger.warning("create_task_on_chain: skip (no deployer account or no w3; set REVIVE_DEPLOYER_PRIVATE_KEY and REVIVE_RPC_URL)")
+        logger.warning("create_task_on_chain: skip (no deployer account or w3; set REVIVE_DEPLOYER_PRIVATE_KEY and REVIVE_RPC_URL)")
         return None
     try:
         chain_task_id = next_task_id()
         if chain_task_id is None:
             logger.warning("create_task_on_chain: next_task_id() returned None")
             return None
-        approve_hash = approve_cog(settings.TASK_MARKET_ADDRESS, reward_wei)
-        if not approve_hash:
-            time.sleep(3)
-            approve_hash = approve_cog(settings.TASK_MARKET_ADDRESS, reward_wei)
-        if not approve_hash:
-            logger.warning("create_task_on_chain: approve_cog failed (deployer may have insufficient COG or allowance)")
-            return None
-        if not _wait_for_receipt(w3, approve_hash):
-            logger.warning("create_task_on_chain: approve tx not mined or failed; skipping createTask")
-            return None
         tx_hash = _send_tx(
             w3, account, settings.TASK_MARKET_ADDRESS, ABI_TASK_MARKET,
-            "createTask", (poster_agent_id, title, reward_wei), 250_000,
+            "createTask", (poster_agent_id, title, reward_wei), 250_000, value_wei=reward_wei,
         )
         if not tx_hash:
-            logger.warning("create_task_on_chain: createTask tx failed (check deployer balance and gas)")
+            logger.warning("create_task_on_chain: createTask tx failed (check deployer IVE balance and gas)")
             return None
         logger.info("create_task_on_chain: ok chain_task_id=%s tx_hash=%s", chain_task_id, tx_hash)
         return (chain_task_id, tx_hash)

@@ -387,7 +387,7 @@ function DashboardContent() {
                     >
                       {task.status}
                     </span>
-                    <span className="tag">{task.reward_cog} COG</span>
+                    <span className="tag">{task.reward_cog} IVE</span>
                   </div>
                   <div className="task-title">{task.title}</div>
                   {task.description && (

@@ -53,19 +53,19 @@ async def publish_task(payload: TaskListingCreate, db: DBSession, user: CurrentU
     # Revive: create task on chain (escrow COG)
     reward_wei = _reward_to_wei(payload.reward_cog)
     if reward_wei > 0:
-        balance_wei = await asyncio.to_thread(chain_service.deployer_cog_balance_wei)
+        balance_wei = await asyncio.to_thread(chain_service.deployer_native_balance_wei)
         if balance_wei is None:
             raise HTTPException(
                 status_code=503,
-                detail="Cannot check deployer COG balance (Revive RPC or config unavailable).",
+                detail="Cannot check deployer IVE balance (Revive RPC or config unavailable).",
             )
         if balance_wei < reward_wei:
-            balance_cog = float(balance_wei) / (10**COG_DECIMALS)
+            balance_ive = float(balance_wei) / (10**COG_DECIMALS)
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Insufficient COG for reward. Deployer balance: {balance_cog:.2f} COG; "
-                    f"required: {payload.reward_cog} COG. Top up deployer COG or reduce the task reward."
+                    f"Insufficient IVE for reward. Deployer balance: {balance_ive:.2f} IVE; "
+                    f"required: {payload.reward_cog} IVE. Top up deployer IVE or reduce the task reward."
                 ),
             )
         logger.info("publish_task: creating on chain listing_id=%s reward_wei=%s", listing.id, reward_wei)

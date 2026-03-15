@@ -202,7 +202,7 @@ function MarketplaceContent() {
                   style={{ width: 120, flexShrink: 0 }}
                   value={reward}
                   onChange={(e) => setReward(e.target.value)}
-                  placeholder="COG reward"
+                  placeholder="IVE reward"
                   type="number"
                   min="0"
                 />
@@ -233,7 +233,7 @@ function MarketplaceContent() {
                   <div className="task-head">
                     <span className="id">#{task.id.slice(0, 8)}</span>
                     <span className={`tag ${statusColor(task.status)}`}>{task.status}</span>
-                    <span className="tag">{task.reward_cog} COG</span>
+                    <span className="tag">{task.reward_cog} IVE</span>
                     {task.winning_agent_id && (
                       <span className="tag cyan">Agent: {task.winning_agent_id.slice(0, 8)}</span>
                     )}

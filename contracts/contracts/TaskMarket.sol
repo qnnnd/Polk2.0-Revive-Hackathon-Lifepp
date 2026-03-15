@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 /**
  * @title TaskMarket
- * @notice Marketplace for agent tasks with COG token escrow.
- *         Flow: create → accept → complete (releases escrow).
+ * @notice Marketplace for agent tasks with native IVE token escrow.
+ *         Flow: create (send IVE) → accept → complete (release IVE to rewardRecipient).
  */
 contract TaskMarket {
     enum TaskStatus { Open, Accepted, Completed, Cancelled }
@@ -20,12 +18,11 @@ contract TaskMarket {
         TaskStatus status;
         address    acceptor;
         string     acceptorAgentId;
-        address    rewardRecipient;  // address that receives COG on completion (e.g. claimer's wallet)
+        address    rewardRecipient;
         uint256    createdAt;
         uint256    completedAt;
     }
 
-    IERC20 public cogToken;
     uint256 public nextTaskId;
     mapping(uint256 => TaskInfo) public tasks;
 
@@ -34,17 +31,13 @@ contract TaskMarket {
     event TaskCompleted(uint256 indexed taskId, uint256 reward);
     event TaskCancelled(uint256 indexed taskId);
 
-    constructor(address _cogToken) {
-        cogToken = IERC20(_cogToken);
-    }
-
     function createTask(
         string calldata posterAgentId,
         string calldata title,
         uint256 rewardAmount
-    ) external returns (uint256) {
+    ) external payable returns (uint256) {
         require(rewardAmount > 0, "Reward must be > 0");
-        require(cogToken.transferFrom(msg.sender, address(this), rewardAmount), "Escrow transfer failed");
+        require(msg.value == rewardAmount, "Send exact reward amount as IVE");
 
         uint256 taskId = nextTaskId++;
         tasks[taskId] = TaskInfo({
@@ -88,7 +81,8 @@ contract TaskMarket {
         t.completedAt = block.timestamp;
 
         address payoutTo = t.rewardRecipient != address(0) ? t.rewardRecipient : t.acceptor;
-        require(cogToken.transfer(payoutTo, t.rewardAmount), "Reward transfer failed");
+        (bool ok, ) = payable(payoutTo).call{ value: t.rewardAmount }("");
+        require(ok, "Reward transfer failed");
 
         emit TaskCompleted(taskId, t.rewardAmount);
     }
@@ -99,7 +93,8 @@ contract TaskMarket {
         require(t.poster == msg.sender, "Only poster can cancel");
 
         t.status = TaskStatus.Cancelled;
-        require(cogToken.transfer(t.poster, t.rewardAmount), "Refund failed");
+        (bool ok, ) = payable(t.poster).call{ value: t.rewardAmount }("");
+        require(ok, "Refund failed");
 
         emit TaskCancelled(taskId);
     }

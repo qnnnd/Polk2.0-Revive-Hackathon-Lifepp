@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-E2E test: Task publish → accept → complete with COG flow.
+E2E test: Task publish → accept → complete with native IVE flow.
 Users: A = Test-Creator (0xf24F...), B = Test-Worker (0x3Cd0...).
 Deployer pays on chain = A's address (backend uses deployer key = A).
-Phases: (1) A publishes → check deployer COG deducted
-        (2) B accepts, A completes → check B receives COG
-        (3) B publishes → check deployer COG deducted again
-        (4) A accepts, B completes → check A receives COG
+Phases: (1) A publishes → check deployer IVE deducted
+        (2) B accepts, A completes → check B receives IVE
+        (3) B publishes → check deployer IVE deducted again
+        (4) A accepts, B completes → check A receives IVE
 
 Usage:
-  python scripts/e2e_task_cog_test.py           # Full test with chain + COG checks
-  python scripts/e2e_task_cog_test.py --no-chain  # API-only (reward=0), no chain/COG checks
+  python scripts/e2e_task_cog_test.py           # Full test with chain + IVE checks
+  python scripts/e2e_task_cog_test.py --no-chain  # API-only (reward=0), no chain checks
 """
 import argparse
 import json
@@ -26,7 +26,6 @@ except ImportError:
 BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:8002")
 API = f"{BASE_URL}/api/v1"
 RPC_URL = os.environ.get("E2E_RPC_URL", "http://127.0.0.1:8545")
-COG_TOKEN = os.environ.get("COG_TOKEN_ADDRESS", "0xeAB4eEBa1FF8504c124D031F6844AD98d07C318f")
 
 ADDR_A = "0xf24FF3a9CF04c71Dbc94D0b566f7A27B94566cac"  # Test-Creator = deployer
 ADDR_B = "0x3Cd0A705a2DC65e5b1E1205896BaA2be8A07c6e0"  # Test-Worker
@@ -44,10 +43,9 @@ def rpc(method: str, params: list) -> dict:
     return data.get("result")
 
 
-def cog_balance(address: str) -> float:
-    addr = address.lower().replace("0x", "").zfill(64)
-    data_hex = "0x70a08231" + addr  # balanceOf(address)
-    out = rpc("eth_call", [{"to": COG_TOKEN, "data": data_hex}, "latest"])
+def ive_balance(address: str) -> float:
+    """Native IVE balance of address (ether units)."""
+    out = rpc("eth_getBalance", [address, "latest"])
     if not out or out == "0x":
         return 0.0
     return int(out, 16) / 1e18
@@ -96,9 +94,9 @@ def main():
 
     # --- Phase 0: balances before (skip if no-chain) ---
     if not no_chain:
-        bal_a_before = cog_balance(ADDR_A)
-        bal_b_before = cog_balance(ADDR_B)
-        print(f"[0] COG balance  A (deployer): {bal_a_before:.2f}  B: {bal_b_before:.2f}\n")
+        bal_a_before = ive_balance(ADDR_A)
+        bal_b_before = ive_balance(ADDR_B)
+        print(f"[0] IVE balance  A (deployer): {bal_a_before:.2f}  B: {bal_b_before:.2f}\n")
     else:
         bal_a_before = bal_b_before = 0.0
 
@@ -123,7 +121,7 @@ def main():
     reward_2 = 0.0 if no_chain else REWARD_BA
 
     # --- Phase 1: A publishes ---
-    print("[1] A publishes task (reward %.0f COG) ..." % reward_1)
+    print("[1] A publishes task (reward %.0f IVE) ..." % reward_1)
     listing = api_post("/tasks", token_a, {
         "title": "E2E Test A→B",
         "description": "Task from A to B",
@@ -137,12 +135,12 @@ def main():
     print("    listing_id=%s chain_task_id=%s" % (lid, chain_id))
 
     if not no_chain:
-        bal_a_after_publish = cog_balance(ADDR_A)
+        bal_a_after_publish = ive_balance(ADDR_A)
         expected_a = bal_a_before - REWARD_AB
         if abs(bal_a_after_publish - expected_a) > 0.01:
             print("FAIL: Deployer COG not deducted. Before=%.2f after=%.2f expected=%.2f" % (bal_a_before, bal_a_after_publish, expected_a))
             sys.exit(1)
-        print("    OK: Deployer COG deducted (%.2f -> %.2f)\n" % (bal_a_before, bal_a_after_publish))
+        print("    OK: Deployer IVE deducted (%.2f -> %.2f)\n" % (bal_a_before, bal_a_after_publish))
     else:
         bal_a_after_publish = bal_a_before
         print("    OK: (no chain)\n")
@@ -152,18 +150,18 @@ def main():
     api_post(f"/tasks/{lid}/accept", token_b, params={"agent_id": agent_id_b})
     api_post(f"/tasks/{lid}/complete", token_a)
     if not no_chain:
-        bal_b_after_first = cog_balance(ADDR_B)
+        bal_b_after_first = ive_balance(ADDR_B)
         expected_b = bal_b_before + REWARD_AB
         if abs(bal_b_after_first - expected_b) > 0.01:
-            print("FAIL: B did not receive COG. Before=%.2f after=%.2f expected=%.2f" % (bal_b_before, bal_b_after_first, expected_b))
+            print("FAIL: B did not receive IVE. Before=%.2f after=%.2f expected=%.2f" % (bal_b_before, bal_b_after_first, expected_b))
             sys.exit(1)
-        print("    OK: B received COG (%.2f -> %.2f)\n" % (bal_b_before, bal_b_after_first))
+        print("    OK: B received IVE (%.2f -> %.2f)\n" % (bal_b_before, bal_b_after_first))
     else:
         bal_b_after_first = bal_b_before
         print("    OK: accept + complete\n")
 
     # --- Phase 3: B publishes ---
-    print("[3] B publishes task (reward %.0f COG) ..." % reward_2)
+    print("[3] B publishes task (reward %.0f IVE) ..." % reward_2)
     listing2 = api_post("/tasks", token_b, {
         "title": "E2E Test B→A",
         "description": "Task from B to A",
@@ -177,12 +175,12 @@ def main():
     print("    listing_id=%s chain_task_id=%s" % (lid2, chain_id2))
 
     if not no_chain:
-        bal_a_after_b_publish = cog_balance(ADDR_A)
+        bal_a_after_b_publish = ive_balance(ADDR_A)
         expected_a2 = bal_a_after_publish - REWARD_BA
         if abs(bal_a_after_b_publish - expected_a2) > 0.01:
-            print("FAIL: Deployer COG not deducted on B's publish. Before=%.2f after=%.2f expected=%.2f" % (bal_a_after_publish, bal_a_after_b_publish, expected_a2))
+            print("FAIL: Deployer IVE not deducted on B's publish. Before=%.2f after=%.2f expected=%.2f" % (bal_a_after_publish, bal_a_after_b_publish, expected_a2))
             sys.exit(1)
-        print("    OK: Deployer COG deducted again (%.2f -> %.2f)\n" % (bal_a_after_publish, bal_a_after_b_publish))
+        print("    OK: Deployer IVE deducted again (%.2f -> %.2f)\n" % (bal_a_after_publish, bal_a_after_b_publish))
     else:
         bal_a_after_b_publish = bal_a_after_publish
         print("    OK: (no chain)\n")
@@ -192,21 +190,21 @@ def main():
     api_post(f"/tasks/{lid2}/accept", token_a, params={"agent_id": agent_id_a})
     api_post(f"/tasks/{lid2}/complete", token_b)
     if not no_chain:
-        bal_a_final = cog_balance(ADDR_A)
+        bal_a_final = ive_balance(ADDR_A)
         expected_a_final = bal_a_after_b_publish + REWARD_BA
         if abs(bal_a_final - expected_a_final) > 0.01:
-            print("FAIL: A did not receive COG. Before=%.2f after=%.2f expected=%.2f" % (bal_a_after_b_publish, bal_a_final, expected_a_final))
+            print("FAIL: A did not receive IVE. Before=%.2f after=%.2f expected=%.2f" % (bal_a_after_b_publish, bal_a_final, expected_a_final))
             sys.exit(1)
-        print("    OK: A received COG (%.2f -> %.2f)\n" % (bal_a_after_b_publish, bal_a_final))
+        print("    OK: A received IVE (%.2f -> %.2f)\n" % (bal_a_after_b_publish, bal_a_final))
     else:
         bal_a_final = bal_a_after_b_publish
         print("    OK: accept + complete\n")
 
     print("=== All phases OK ===")
     if no_chain:
-        print("(API flow only; run without --no-chain when chain accepts txs to verify COG.)")
+        print("(API flow only; run without --no-chain when chain accepts txs to verify IVE.)")
     else:
-        print("Final COG  A: %.2f  B: %.2f" % (bal_a_final, bal_b_after_first))
+        print("Final IVE  A: %.2f  B: %.2f" % (bal_a_final, bal_b_after_first))
 
 
 if __name__ == "__main__":

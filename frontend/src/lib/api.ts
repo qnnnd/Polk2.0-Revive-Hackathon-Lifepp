@@ -227,7 +227,6 @@ export interface ChainConfig {
   chain_id: number | null;
   task_market_address: string;
   agent_registry_address: string;
-  cog_token_address: string;
   reputation_address: string;
   configured: boolean;
 }

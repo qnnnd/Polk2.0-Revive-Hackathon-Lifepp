@@ -16,15 +16,15 @@ router = APIRouter(prefix="/chain", tags=["Chain"])
 @router.get("/balance")
 async def get_my_balance(user: CurrentUser) -> dict[str, Any]:
     """
-    COG balance from Revive (13.4: chain-derived). Uses user.wallet_address when set.
+    Native IVE balance from Revive (13.4: chain-derived). Uses user.wallet_address when set.
     Returns 0 when chain not configured or user has no wallet.
     """
     if not user.wallet_address:
-        return {"balance_cog": 0.0, "source": "none"}
+        return {"balance_ive": 0.0, "source": "none"}
     balance = chain_service.balance_of(user.wallet_address)
     if balance is None:
-        return {"balance_cog": 0.0, "source": "unavailable"}
-    return {"balance_cog": float(balance), "source": "chain"}
+        return {"balance_ive": 0.0, "source": "unavailable"}
+    return {"balance_ive": float(balance), "source": "chain"}
 
 
 @router.get("/config")
@@ -41,7 +41,6 @@ async def get_chain_config() -> dict[str, Any]:
         "chain_id": chain_id,
         "task_market_address": settings.TASK_MARKET_ADDRESS or "",
         "agent_registry_address": settings.AGENT_REGISTRY_ADDRESS or "",
-        "cog_token_address": settings.COG_TOKEN_ADDRESS or "",
         "reputation_address": settings.REPUTATION_ADDRESS or "",
         "configured": settings.revive_configured,
     }

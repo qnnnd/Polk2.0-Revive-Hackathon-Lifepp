@@ -37,7 +37,6 @@ class Settings(BaseSettings):
 
     # Revive testnet (required for 13.4 compliance)
     REVIVE_RPC_URL: Optional[str] = None
-    COG_TOKEN_ADDRESS: Optional[str] = None
     AGENT_REGISTRY_ADDRESS: Optional[str] = None
     TASK_MARKET_ADDRESS: Optional[str] = None
     REPUTATION_ADDRESS: Optional[str] = None
@@ -59,7 +58,6 @@ class Settings(BaseSettings):
     def revive_configured(self) -> bool:
         return bool(
             self.REVIVE_RPC_URL
-            and self.COG_TOKEN_ADDRESS
             and self.AGENT_REGISTRY_ADDRESS
             and self.TASK_MARKET_ADDRESS
             and self.REPUTATION_ADDRESS
@@ -87,6 +85,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # ignore legacy keys e.g. COG_TOKEN_ADDRESS
 
 
 settings = Settings()

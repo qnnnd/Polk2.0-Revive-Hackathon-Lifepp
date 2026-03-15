@@ -97,7 +97,7 @@ export function Marketplace({ agentId }: MarketplaceProps) {
           <input
             value={reward}
             onChange={(e) => setReward(e.target.value)}
-            placeholder="Reward (COG)"
+            placeholder="Reward (IVE)"
             type="number"
             min="0"
             step="0.1"
@@ -149,7 +149,7 @@ export function Marketplace({ agentId }: MarketplaceProps) {
                 )}
                 <div className="flex items-center gap-4 mt-1">
                   <span className="text-[10px] text-muted font-mono">
-                    {task.reward_cog > 0 ? `${task.reward_cog} COG` : "No reward"}
+                    {task.reward_cog > 0 ? `${task.reward_cog} IVE` : "No reward"}
                   </span>
                   <span className="text-[10px] text-muted font-mono">
                     {new Date(task.created_at).toLocaleDateString()}

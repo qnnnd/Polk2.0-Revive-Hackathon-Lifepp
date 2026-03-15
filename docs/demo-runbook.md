@@ -30,7 +30,7 @@ Full steps: **[docs/revive-local-setup.md](revive-local-setup.md)**.
 In `backend/.env` add (from deployments.json after deploy):
 
 - `REVIVE_RPC_URL` — Revive RPC URL
-- `COG_TOKEN_ADDRESS` — COGToken contract
+- Rewards use native IVE (no separate token contract)
 - `AGENT_REGISTRY_ADDRESS` — AgentRegistry contract
 - `TASK_MARKET_ADDRESS` — TaskMarket contract
 - `REPUTATION_ADDRESS` — Reputation contract

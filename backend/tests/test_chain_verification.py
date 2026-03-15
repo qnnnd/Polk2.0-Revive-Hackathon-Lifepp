@@ -69,7 +69,7 @@ def test_reputation_readable():
     reason="Revive not configured",
 )
 def test_cog_balance_readable():
-    """COGToken.balanceOf is callable (zero address or deployer)."""
+    """Native IVE balance_of is callable (zero address or deployer)."""
     zero = "0x0000000000000000000000000000000000000000"
     balance = chain_service.balance_of(zero)
     assert balance is None or (balance >= 0), "balance_of should be non-negative or None"

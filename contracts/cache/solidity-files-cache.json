@@ -304,8 +304,8 @@
       ]
     },
     "/Users/liuguoqing/Documents/Personal/Project/Polk2.0-Revive-Hackathon-Lifepp/contracts/contracts/TaskMarket.sol": {
-      "lastModificationDate": 1773553053270,
-      "contentHash": "b390f205d6adbcbc56f56dd41b526c03",
+      "lastModificationDate": 1773560414277,
+      "contentHash": "8b7bb43d009b40b6f3a14ea9cd190a7b",
       "sourceName": "contracts/TaskMarket.sol",
       "solcConfig": {
         "version": "0.8.24",
@@ -331,9 +331,7 @@
           }
         }
       },
-      "imports": [
-        "@openzeppelin/contracts/token/ERC20/IERC20.sol"
-      ],
+      "imports": [],
       "versionPragmas": [
         "^0.8.24"
       ],

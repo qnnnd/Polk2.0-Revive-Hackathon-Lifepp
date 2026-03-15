@@ -79,10 +79,10 @@
 - **任务卡片**：完成的任务若走链上结算，会显示 **TX: 0x...**；有该 hash 表示链上 `completeTask` 已成功，合约已将 COG 转给**认领时连接的钱包**（rewardRecipient）。
 - **链上设计**：认领时后端会把**当前用户已连接的钱包地址**写入合约的 rewardRecipient；完成时 COG 从 TaskMarket 合约转给该地址。因此认领者必须在认领前在应用内**连接钱包**（如 MetaMask），且完成时收到 COG 的是**认领时绑定的那个地址**。
 - **认领者看不到 COG 时请排查**：
-  1. **是否在钱包里添加了 COG 代币**：多数钱包不会自动显示自定义 ERC-20，需手动「添加代币」/「Import token」。Revive Local 上 COG 合约地址见 `contracts/deployments.json` 的 `COGToken`（例如 `0xeAB4eEBa1FF8504c124D031F6844AD98d07C318f`），小数位 18。
+  1. **奖励使用原生 IVE**：任务奖励为链上原生代币 IVE，无需添加 ERC-20；认领方完成后的收款地址会收到 IVE。
   2. **认领与查看是否同一账户**：收到 COG 的是在 Life++ 里点击认领时已连接并绑定的钱包地址；若在扩展里切换了账户，请确认当前选中的账户与当时认领一致。
   3. **任务是否在新合约上完成**：若任务是在**重新部署合约之前**认领/完成的，当时链上仍可能把奖励发给 deployer；请用**新发布并新认领**的任务再测一遍。
-- **应用内**：接任务方的 Agent 声誉会更新（Dashboard / Agent 详情中的 tasks completed、total_cog_earned 等）。
+- **应用内**：接任务方的 Agent 声誉会更新（Dashboard / Agent 详情中的 tasks completed、total_cog_earned 等）。奖励单位为 IVE。
 
 ---
 
@@ -116,7 +116,7 @@
 | 步骤 | 命令 | 说明 |
 |------|------|------|
 | 8.1 | `./backend/.venv/bin/python scripts/e2e_task_cog_test.py --no-chain` | 仅验证 API 流程（reward=0，不依赖链）；A 发任务 → B 认领 → A 完成，再 B 发 → A 认领 → B 完成 |
-| 8.2 | `./backend/.venv/bin/python scripts/e2e_task_cog_test.py` | 完整流程：带奖励、链上扣款与发放。需本地 Revive 节点接受交易（若出现 1010/1012 则链未放行，先跑 8.1 验证接口） |
+| 8.2 | `./backend/.venv/bin/python scripts/e2e_task_cog_test.py` | 完整流程：带 IVE 奖励、链上扣款与发放。需本地 Revive 节点接受交易（若出现 1010/1012 则链未放行，先跑 8.1 验证接口） |
 
 用户 A 地址：`0xf24FF3a9CF04c71Dbc94D0b566f7A27B94566cac`，用户 B：`0x3Cd0A705a2DC65e5b1E1205896BaA2be8A07c6e0`。脚本会先为两者设置钱包并拉取 Agent，再按阶段发布/认领/完成并（在非 `--no-chain` 时）校验 deployer 与 B/A 的 COG 余额变化。
 
