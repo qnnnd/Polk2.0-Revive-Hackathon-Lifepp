@@ -304,8 +304,8 @@
       ]
     },
     "/Users/liuguoqing/Documents/Personal/Project/Polk2.0-Revive-Hackathon-Lifepp/contracts/contracts/TaskMarket.sol": {
-      "lastModificationDate": 1773560414277,
-      "contentHash": "8b7bb43d009b40b6f3a14ea9cd190a7b",
+      "lastModificationDate": 1773564289804,
+      "contentHash": "7fa3d123c71597758167a0d4efb48687",
       "sourceName": "contracts/TaskMarket.sol",
       "solcConfig": {
         "version": "0.8.24",

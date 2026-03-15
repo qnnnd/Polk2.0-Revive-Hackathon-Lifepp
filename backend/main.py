@@ -23,9 +23,27 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _log_deployer_address():
+    """Log deployer address so operator can verify it matches contract deployer (relayer)."""
+    key = getattr(settings, "REVIVE_DEPLOYER_PRIVATE_KEY", None) or ""
+    if not key or not key.strip():
+        logger.info("REVIVE_DEPLOYER_PRIVATE_KEY not set; accept/complete on chain will be skipped.")
+        return
+    try:
+        from eth_account import Account
+        addr = Account.from_key(key.strip()).address
+        logger.info(
+            "Chain relayer (deployer) address: %s — must match 'deployer' in contracts/deployments.json for accept/complete to succeed.",
+            addr,
+        )
+    except Exception as e:
+        logger.warning("Could not derive deployer address from REVIVE_DEPLOYER_PRIVATE_KEY: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Life++ API v%s [%s]", settings.APP_VERSION, settings.ENVIRONMENT)
+    _log_deployer_address()
     await init_db()
     logger.info("Database initialized")
     yield

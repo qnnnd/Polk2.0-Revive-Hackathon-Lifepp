@@ -17,7 +17,7 @@ from app.api.v1.deps import CurrentUser
 logger = logging.getLogger(__name__)
 from app.db.session import DBSession
 from app.models.models import Agent, AgentReputation, ReputationEvent, Task, TaskListing, User
-from app.schemas.schemas import TaskListingCreate, TaskListingResponse
+from app.schemas.schemas import ChainCreatedUpdate, ChainTxParams, TaskListingCreate, TaskListingResponse
 from app.services import chain_service
 
 COG_DECIMALS = 18
@@ -50,45 +50,60 @@ async def publish_task(payload: TaskListingCreate, db: DBSession, user: CurrentU
     db.add(listing)
     await db.flush()
 
-    # Revive: create task on chain (escrow COG)
+    # When reward > 0: publisher pays (frontend signs createTask with MetaMask). We return tx params.
     reward_wei = _reward_to_wei(payload.reward_cog)
+    chain_tx_params = None
     if reward_wei > 0:
-        balance_wei = await asyncio.to_thread(chain_service.deployer_native_balance_wei)
-        if balance_wei is None:
+        if not user.wallet_address or not user.wallet_address.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Connect your wallet (MetaMask) to publish a task with IVE reward; the reward will be deducted from your account.",
+            )
+        balance_dec = await asyncio.to_thread(
+            chain_service.balance_of,
+            user.wallet_address.strip(),
+        )
+        if balance_dec is None:
             raise HTTPException(
                 status_code=503,
-                detail="Cannot check deployer IVE balance (Revive RPC or config unavailable).",
+                detail="Cannot check your IVE balance (Revive RPC unavailable).",
             )
-        if balance_wei < reward_wei:
-            balance_ive = float(balance_wei) / (10**COG_DECIMALS)
+        balance_wei_int = int(Decimal(str(balance_dec)) * (10**COG_DECIMALS))
+        if balance_wei_int < reward_wei:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Insufficient IVE for reward. Deployer balance: {balance_ive:.2f} IVE; "
-                    f"required: {payload.reward_cog} IVE. Top up deployer IVE or reduce the task reward."
+                    f"Insufficient IVE for reward. Your balance: {float(balance_dec):.2f} IVE; "
+                    f"required: {payload.reward_cog} IVE."
                 ),
             )
-        logger.info("publish_task: creating on chain listing_id=%s reward_wei=%s", listing.id, reward_wei)
-        chain_result = await asyncio.to_thread(
-            chain_service.create_task_on_chain,
+        tx_params = await asyncio.to_thread(
+            chain_service.get_create_task_tx_params,
             str(poster_agent.id),
             payload.title,
             reward_wei,
         )
-        if chain_result:
-            chain_task_id, tx_hash = chain_result
-            listing.chain_task_id = chain_task_id
-            listing.tx_hash = tx_hash
-            db.add(listing)
-            await db.flush()
-            logger.info("publish_task: chain created listing_id=%s chain_task_id=%s tx_hash=%s", listing.id, chain_task_id, tx_hash)
+        if tx_params:
+            chain_tx_params = ChainTxParams(
+                to=tx_params["to"],
+                data=tx_params["data"],
+                value=tx_params["value"],
+                chain_id=tx_params["chain_id"],
+            )
+            logger.info("publish_task: listing_id=%s returning chain_tx_params for publisher to sign", listing.id)
         else:
-            logger.warning("publish_task: chain create failed (listing has no chain_task_id); check chain_service logs. listing_id=%s", listing.id)
+            logger.warning(
+                "publish_task: listing_id=%s no chain_tx_params (backend RPC or TASK_MARKET_ADDRESS not ready)",
+                listing.id,
+            )
     else:
-        logger.info("publish_task: reward_wei=0, skipping chain. listing_id=%s", listing.id)
+        logger.info("publish_task: reward_wei=0, no chain. listing_id=%s", listing.id)
 
     await db.refresh(listing)
-    return listing
+    resp = TaskListingResponse.model_validate(listing)
+    if chain_tx_params is not None:
+        resp.chain_tx_params = chain_tx_params
+    return resp
 
 
 @router.get("", response_model=List[TaskListingResponse])
@@ -104,6 +119,37 @@ async def list_marketplace_tasks(
     q = q.order_by(TaskListing.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(q)
     return list(result.scalars().all())
+
+
+@router.patch("/{listing_id}/chain_created", response_model=TaskListingResponse)
+async def confirm_chain_created(listing_id: uuid.UUID, body: ChainCreatedUpdate, db: DBSession, user: CurrentUser):
+    """After publisher signed createTask in MetaMask, submit tx_hash to set chain_task_id on the listing."""
+    listing = (await db.execute(select(TaskListing).where(TaskListing.id == listing_id))).scalar_one_or_none()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    poster = (await db.execute(select(Agent).where(Agent.id == listing.poster_agent_id))).scalar_one_or_none()
+    if not poster or poster.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the publisher can confirm this listing")
+    if listing.chain_task_id is not None:
+        await db.refresh(listing)
+        return listing
+    chain_task_id = await asyncio.to_thread(
+        chain_service.get_task_id_from_create_tx,
+        body.tx_hash.strip(),
+        60,
+    )
+    if chain_task_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not get task id from transaction. Ensure the tx succeeded and is from createTask.",
+        )
+    listing.chain_task_id = chain_task_id
+    listing.tx_hash = body.tx_hash.strip()
+    db.add(listing)
+    await db.flush()
+    logger.info("confirm_chain_created: listing_id=%s chain_task_id=%s tx_hash=%s", listing.id, chain_task_id, body.tx_hash[:18])
+    await db.refresh(listing)
+    return listing
 
 
 @router.post("/{listing_id}/cancel", response_model=TaskListingResponse)
@@ -168,9 +214,17 @@ async def accept_task(
         )
         if tx_hash:
             listing.tx_hash = tx_hash
+            ok = await asyncio.to_thread(chain_service.wait_for_receipt, tx_hash, 60)
+            if not ok:
+                logger.warning("accept_task: chain accept tx reverted or timeout listing_id=%s", listing_id)
+                raise HTTPException(status_code=503, detail="Chain accept tx failed or reverted. Retry or check RPC.")
             logger.info("accept_task: chain accept ok listing_id=%s tx_hash=%s", listing_id, tx_hash)
         else:
             logger.warning("accept_task: chain accept failed (see chain_service logs). listing_id=%s chain_task_id=%s", listing_id, listing.chain_task_id)
+            raise HTTPException(
+                status_code=503,
+                detail="Chain accept failed. Retry in a moment or check Revive RPC and deployer.",
+            )
     else:
         logger.info("accept_task: listing has no chain_task_id, skipping chain. listing_id=%s", listing_id)
 
@@ -197,19 +251,23 @@ async def complete_task(listing_id: uuid.UUID, db: DBSession, user: CurrentUser)
         logger.info("complete_task: calling chain listing_id=%s chain_task_id=%s", listing_id, listing.chain_task_id)
         tx_hash = await asyncio.to_thread(chain_service.complete_task_on_chain, listing.chain_task_id)
         if not tx_hash:
-            logger.warning("complete_task: chain complete failed (see chain_service logs). listing_id=%s chain_task_id=%s", listing_id, listing.chain_task_id)
-            raise HTTPException(
-                status_code=503,
-                detail="Chain completion failed. Check Revive RPC and deployer balance; retry later.",
-            )
-        listing.tx_hash = tx_hash
-        logger.info("complete_task: chain complete ok listing_id=%s tx_hash=%s (COG sent to rewardRecipient)", listing_id, tx_hash)
-        if listing.winning_agent_id:
-            reward_wei = _reward_to_wei(float(listing.reward_cog))
-            await asyncio.to_thread(
-                chain_service.record_reputation_task_complete,
-                str(listing.winning_agent_id),
-                reward_wei,
+            await asyncio.sleep(5)
+            tx_hash = await asyncio.to_thread(chain_service.complete_task_on_chain, listing.chain_task_id)
+        if tx_hash:
+            listing.tx_hash = tx_hash
+            logger.info("complete_task: chain complete ok listing_id=%s tx_hash=%s (COG sent to rewardRecipient)", listing_id, tx_hash)
+            if listing.winning_agent_id:
+                reward_wei = _reward_to_wei(float(listing.reward_cog))
+                await asyncio.to_thread(
+                    chain_service.record_reputation_task_complete,
+                    str(listing.winning_agent_id),
+                    reward_wei,
+                )
+        else:
+            logger.warning(
+                "complete_task: chain complete failed but task will be marked completed in DB. listing_id=%s chain_task_id=%s",
+                listing_id,
+                listing.chain_task_id,
             )
     else:
         logger.info("complete_task: listing has no chain_task_id, skipping chain (no COG transfer). listing_id=%s", listing_id)

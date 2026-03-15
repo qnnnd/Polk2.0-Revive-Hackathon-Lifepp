@@ -1,8 +1,8 @@
 {
-  "AgentRegistry": "0x9c1da847B31C0973F26b1a2A3d5c04365a867703",
-  "TaskMarket": "0xd528a533599223CA6B5EBdd1C32A241432FB1AE8",
-  "Reputation": "0x527FC4060Ac7Bf9Cd19608EDEeE8f09063A16cd4",
+  "AgentRegistry": "0x6eA3524AD29729b10F324fD2aF967beed9cc4E68",
+  "TaskMarket": "0x115f277e8fcE437B1F513A293057D2E396Ac2EC1",
+  "Reputation": "0x71d5a92A9056aB2Ee81811aF045439e059Dd6FBc",
   "deployer": "0xf24FF3a9CF04c71Dbc94D0b566f7A27B94566cac",
   "network": "revive-local",
-  "timestamp": "2026-03-15T07:46:24.417Z"
+  "timestamp": "2026-03-15T08:27:16.344Z"
 }

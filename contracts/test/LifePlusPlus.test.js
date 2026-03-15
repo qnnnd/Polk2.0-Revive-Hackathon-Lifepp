@@ -56,6 +56,30 @@ describe("Life++ Smart Contracts", function () {
       task = await taskMarket.getTask(0);
       expect(task.status).to.equal(2);
     });
+
+    it("relayer can accept on behalf of user (acceptTaskFor)", async function () {
+      const reward = ethers.parseEther("10");
+      await taskMarket.connect(deployer).createTask("agent-deployer", "Relayer task", reward, { value: reward });
+      expect((await taskMarket.getTask(0)).status).to.equal(0);
+      await taskMarket.connect(deployer).acceptTaskFor(0, "agent-bob", bob.address, bob.address);
+      expect((await taskMarket.getTask(0)).status).to.equal(1);
+      expect((await taskMarket.getTask(0)).acceptor).to.equal(bob.address);
+      const bobBefore = await ethers.provider.getBalance(bob.address);
+      await taskMarket.connect(deployer).completeTask(0);
+      const bobAfter = await ethers.provider.getBalance(bob.address);
+      expect(bobAfter - bobBefore).to.equal(reward);
+    });
+
+    it("relayer can complete on behalf of poster (completeTaskFor)", async function () {
+      const reward = ethers.parseEther("5");
+      await taskMarket.connect(alice).createTask("agent-alice", "Poster pays", reward, { value: reward });
+      await taskMarket.connect(deployer).acceptTaskFor(0, "agent-bob", bob.address, bob.address);
+      const bobBefore = await ethers.provider.getBalance(bob.address);
+      await taskMarket.connect(deployer).completeTaskFor(0);
+      const bobAfter = await ethers.provider.getBalance(bob.address);
+      expect(bobAfter - bobBefore).to.equal(reward);
+      expect((await taskMarket.getTask(0)).status).to.equal(2);
+    });
   });
 
   describe("Reputation", function () {

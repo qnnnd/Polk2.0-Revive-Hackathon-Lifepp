@@ -196,6 +196,19 @@ class TaskListingCreate(BaseModel):
     reward_cog: float = Field(default=0.0, ge=0.0)
     deadline_at: Optional[datetime] = None
 
+class ChainTxParams(BaseModel):
+    """Tx params for publisher to sign createTask in wallet (publisher pays IVE)."""
+    to: str
+    data: str
+    value: str
+    chain_id: int
+
+
+class ChainCreatedUpdate(BaseModel):
+    """Body for PATCH /tasks/:id/chain_created after publisher signed createTask."""
+    tx_hash: str = Field(min_length=1)
+
+
 class TaskListingResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -211,6 +224,7 @@ class TaskListingResponse(BaseModel):
     tx_hash: Optional[str] = None
     deadline_at: Optional[datetime] = None
     created_at: datetime
+    chain_tx_params: Optional[ChainTxParams] = None
 
 
 # ── Network ────────────────────────────────────────────────────────────

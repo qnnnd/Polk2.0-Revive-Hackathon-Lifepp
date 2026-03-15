@@ -14,8 +14,16 @@ import {
   queryKeys,
 } from "@/hooks/useApi";
 import { useQueryClient } from "@tanstack/react-query";
-import { getAccessToken, setAccessToken, authApi } from "@/lib/api";
-import type { TaskListing } from "@/types";
+import { getAccessToken, setAccessToken, authApi, marketplaceApi } from "@/lib/api";
+import type { ChainTxParams, TaskListing } from "@/types";
+
+declare global {
+  interface Window {
+    ethereum?: {
+      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+    };
+  }
+}
 
 const FILTER_OPTIONS = ["all", "open", "escrowed", "running", "done"] as const;
 
@@ -103,6 +111,7 @@ function MarketplaceContent() {
   const [description, setDescription] = useState("");
   const [reward, setReward] = useState("");
   const [acceptAgentByListingId, setAcceptAgentByListingId] = useState<Record<string, string>>({});
+  const [completingId, setCompletingId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   // Ensure user-scoped data is fresh when viewing marketplace (e.g. after token change or new tab).
@@ -142,18 +151,65 @@ function MarketplaceContent() {
       toast.error("Title is required");
       return;
     }
+    const rewardNum = reward ? parseFloat(reward) : 0;
+    const hasReward = !Number.isNaN(rewardNum) && rewardNum > 0;
+    if (hasReward && (typeof window === "undefined" || !window.ethereum)) {
+      toast.error("Connect MetaMask (or another wallet) to publish a task with IVE reward.");
+      return;
+    }
     try {
-      await publishTask.mutateAsync({
+      const listing = await publishTask.mutateAsync({
         title: title.trim(),
         description: description.trim() || "No description",
-        reward_cog: reward ? parseFloat(reward) : 0,
+        reward_cog: rewardNum || 0,
       });
-      toast.success("Task published!");
+      const params = listing?.chain_tx_params as ChainTxParams | undefined | null;
+      if (params && params.to && params.data) {
+        toast.info("Please confirm the transaction in your wallet to lock the IVE reward.", {
+          duration: 8000,
+        });
+        const accounts = (await window.ethereum!.request({ method: "eth_requestAccounts" })) as string[];
+        if (!accounts?.[0]) {
+          toast.error("No wallet account selected. Unlock MetaMask and try again.");
+          return;
+        }
+        const txResult = await window.ethereum!.request({
+          method: "eth_sendTransaction",
+          params: [
+            {
+              from: accounts[0],
+              to: params.to,
+              data: params.data,
+              value: params.value,
+              chainId: "0x" + Number(params.chain_id).toString(16),
+            },
+          ],
+        });
+        const txHash = Array.isArray(txResult)
+          ? (txResult[0] as string)
+          : (txResult as string);
+        if (!txHash) {
+          toast.error("Transaction was not sent. Check your wallet.");
+          return;
+        }
+        toast.info("Transaction submitted. Confirming on chain...");
+        await marketplaceApi.confirmChainCreated(listing.id, txHash);
+        queryClient.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+        toast.success("Task published! IVE reward locked from your wallet.");
+      } else {
+        if (hasReward) {
+          toast.warning(
+            "Task saved, but IVE was not locked. Check backend (REVIVE_RPC_URL, TASK_MARKET_ADDRESS) or try again."
+          );
+        } else {
+          toast.success("Task published!");
+        }
+      }
       setTitle("");
       setDescription("");
       setReward("");
     } catch (err: any) {
-      toast.error(err.message ?? "Failed to publish task");
+      toast.error(err?.message ?? "Failed to publish task");
     }
   };
 
@@ -327,13 +383,19 @@ function MarketplaceContent() {
                       <button
                         type="button"
                         onClick={() => {
+                          setCompletingId(task.id);
                           completeTask.mutate(task.id, {
-                            onSuccess: () => toast.success("Task completed"),
-                            onError: (err: any) =>
-                              toast.error(err?.message ?? "Failed to complete task"),
+                            onSuccess: () => {
+                              toast.success("Task completed");
+                              setCompletingId(null);
+                            },
+                            onError: (err: any) => {
+                              toast.error(err?.message ?? "Failed to complete task");
+                              setCompletingId(null);
+                            },
                           });
                         }}
-                        disabled={completeTask.isPending}
+                        disabled={completingId === task.id}
                         style={{
                           marginLeft: "auto",
                           fontSize: 11,
@@ -345,7 +407,7 @@ function MarketplaceContent() {
                           cursor: "pointer",
                         }}
                       >
-                        {completeTask.isPending ? "..." : "Complete"}
+                        {completingId === task.id ? "..." : "Complete"}
                       </button>
                     )}
                     {canCancel(task) && (

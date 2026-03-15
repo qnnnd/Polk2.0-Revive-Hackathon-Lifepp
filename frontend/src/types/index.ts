@@ -160,6 +160,13 @@ export interface TaskListingCreate {
   deadline_at?: string;
 }
 
+export interface ChainTxParams {
+  to: string;
+  data: string;
+  value: string;
+  chain_id: number;
+}
+
 export interface TaskListing {
   id: UUID;
   poster_agent_id: UUID;
@@ -173,6 +180,7 @@ export interface TaskListing {
   tx_hash: string | null;
   deadline_at: string | null;
   created_at: string;
+  chain_tx_params?: ChainTxParams | null;
 }
 
 export interface Reputation {

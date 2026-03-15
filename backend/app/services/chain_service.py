@@ -6,6 +6,7 @@ All chain-derived data for 13.4 compliance must go through this service.
 from __future__ import annotations
 
 import logging
+import time
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -83,7 +84,13 @@ ABI_AGENT_REGISTRY = [
     ], "name": "register", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
 ]
 # TaskMarket.TaskStatus: Open=0, Accepted=1, Completed=2, Cancelled=3
+# Include TaskCreated event so we can parse taskId from createTask tx receipt reliably.
 ABI_TASK_MARKET = [
+    {"anonymous": False, "inputs": [
+        {"indexed": True, "name": "taskId", "type": "uint256"},
+        {"indexed": True, "name": "poster", "type": "address"},
+        {"indexed": False, "name": "reward", "type": "uint256"},
+    ], "name": "TaskCreated", "type": "event"},
     {"inputs": [{"name": "taskId", "type": "uint256"}], "name": "getTask", "outputs": [
         {"name": "id", "type": "uint256"},
         {"name": "poster", "type": "address"},
@@ -100,7 +107,9 @@ ABI_TASK_MARKET = [
     {"inputs": [], "name": "nextTaskId", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [{"name": "posterAgentId", "type": "string"}, {"name": "title", "type": "string"}, {"name": "rewardAmount", "type": "uint256"}], "name": "createTask", "outputs": [{"type": "uint256"}], "stateMutability": "payable", "type": "function"},
     {"inputs": [{"name": "taskId", "type": "uint256"}, {"name": "acceptorAgentId", "type": "string"}, {"name": "rewardRecipient", "type": "address"}], "name": "acceptTask", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "taskId", "type": "uint256"}, {"name": "acceptorAgentId", "type": "string"}, {"name": "rewardRecipient", "type": "address"}, {"name": "acceptorAddress", "type": "address"}], "name": "acceptTaskFor", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
     {"inputs": [{"name": "taskId", "type": "uint256"}], "name": "completeTask", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "taskId", "type": "uint256"}], "name": "completeTaskFor", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
 ]
 ABI_REPUTATION = [
     {"inputs": [{"name": "agentId", "type": "string"}], "name": "getReputation", "outputs": [
@@ -273,6 +282,19 @@ def _get_deployer_account():
         return None
 
 
+def wait_for_receipt(tx_hash_hex: str, timeout_seconds: int = 60) -> bool:
+    """Wait for transaction to be mined. Returns True if succeeded (status 1 or 0x1), False on timeout or revert."""
+    w3 = _w3()
+    if not w3:
+        return False
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash_hex, timeout=timeout_seconds)
+        return _receipt_succeeded(receipt)
+    except Exception as e:
+        logger.warning("wait_for_receipt %s: %s", tx_hash_hex[:18] if tx_hash_hex else "", e)
+        return False
+
+
 def deployer_native_balance_wei() -> Optional[int]:
     """Native IVE balance of the deployer account in wei. Returns None if not configured or RPC error."""
     account = _get_deployer_account()
@@ -290,19 +312,34 @@ def deployer_native_balance_wei() -> Optional[int]:
 
 
 def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, args: tuple, gas: int = 300_000, value_wei: int = 0) -> Optional[str]:
-    """Build, sign, send tx; return tx_hash hex or None. value_wei for payable (e.g. createTask with IVE)."""
+    """Build, sign, send tx; return tx_hash hex or None. Auto-estimates gas with 1.3x buffer for Revive/PolkaVM."""
     try:
         contract = w3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=abi)
         fn = getattr(contract.functions, fn_name)(*args)
         chain_id = w3.eth.chain_id
         gas_price = w3.eth.gas_price
-        base = {"from": account.address, "gas": gas, "chainId": chain_id, "value": value_wei}
+        call_params = {"from": account.address, "value": value_wei}
+        try:
+            gas = int(fn.estimate_gas(call_params) * 1.3)
+        except Exception as est_err:
+            logger.warning("_send_tx %s: estimate_gas failed (%s), using fallback %s", fn_name, est_err, gas)
+        base = {**call_params, "gas": gas, "chainId": chain_id}
         if gas_price and gas_price > 0:
             base["gasPrice"] = gas_price
         tx = fn.build_transaction(base)
         tx["nonce"] = w3.eth.get_transaction_count(account.address)
         signed = account.sign_transaction(tx)
-        tx_hash_bytes = w3.eth.send_raw_transaction(signed.raw_transaction)
+        try:
+            tx_hash_bytes = w3.eth.send_raw_transaction(signed.raw_transaction)
+        except Exception as send_err:
+            if "1012" in str(send_err) or "temporarily banned" in str(send_err).lower():
+                logger.warning("_send_tx %s: 1012/temporarily banned, waiting 5s and retrying once", fn_name)
+                time.sleep(5)
+                tx["nonce"] = w3.eth.get_transaction_count(account.address)
+                signed = account.sign_transaction(tx)
+                tx_hash_bytes = w3.eth.send_raw_transaction(signed.raw_transaction)
+            else:
+                raise
         return w3.to_hex(tx_hash_bytes)
     except (ContractLogicError, ValueError, Exception) as e:
         logger.warning("_send_tx %s(%s) failed: %s", fn_name, contract_address[:10], e)
@@ -324,6 +361,130 @@ def register_agent(agent_id: str, name: str, metadata_uri: str = "") -> Optional
         w3, account, settings.AGENT_REGISTRY_ADDRESS, ABI_AGENT_REGISTRY,
         "register", (agent_id, name, metadata_uri or ""), 200_000,
     )
+
+
+def get_create_task_tx_params(poster_agent_id: str, title: str, reward_wei: int) -> Optional[dict]:
+    """
+    Build createTask tx params for the publisher to sign (e.g. in MetaMask).
+    Returns dict with to, data, value (hex), chain_id so frontend can eth_sendTransaction.
+    Only requires TASK_MARKET_ADDRESS and a working RPC (not full revive_configured).
+    """
+    if not settings.TASK_MARKET_ADDRESS or not settings.TASK_MARKET_ADDRESS.strip():
+        logger.warning("get_create_task_tx_params: TASK_MARKET_ADDRESS not set (run scripts/apply-revive-local-env.sh)")
+        return None
+    w3 = _w3()
+    if not w3:
+        logger.warning("get_create_task_tx_params: no RPC (set REVIVE_RPC_URL or use default http://127.0.0.1:8545)")
+        return None
+    try:
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(settings.TASK_MARKET_ADDRESS),
+            abi=ABI_TASK_MARKET,
+        )
+        fn = contract.functions.createTask(poster_agent_id, title, reward_wei)
+        data_raw = fn._encode_transaction_data()
+        data_hex = data_raw.hex() if hasattr(data_raw, "hex") else data_raw
+        if not data_hex.startswith("0x"):
+            data_hex = "0x" + data_hex
+        return {
+            "to": settings.TASK_MARKET_ADDRESS,
+            "data": data_hex,
+            "value": hex(reward_wei),
+            "chain_id": w3.eth.chain_id,
+        }
+    except Exception as e:
+        logger.warning("get_create_task_tx_params failed: %s", e, exc_info=True)
+        return None
+
+
+def _receipt_succeeded(receipt: dict) -> bool:
+    """True if receipt indicates success (handles int 1 or hex string 0x1)."""
+    s = receipt.get("status")
+    if s is None:
+        return False
+    if s == 1:
+        return True
+    if isinstance(s, str) and s in ("0x1", "0x01"):
+        return True
+    return False
+
+
+def get_task_id_from_create_tx(tx_hash_hex: str, timeout_seconds: int = 60) -> Optional[int]:
+    """
+    Wait for createTask tx receipt and parse TaskCreated event to get taskId.
+    Uses contract event decoding first (reliable); falls back to manual topics parsing.
+    """
+    if not settings.TASK_MARKET_ADDRESS or not settings.TASK_MARKET_ADDRESS.strip():
+        return None
+    w3 = _w3()
+    if not w3:
+        return None
+    tx_hash_hex = tx_hash_hex.strip()
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash_hex, timeout=timeout_seconds)
+        if not _receipt_succeeded(receipt):
+            logger.warning("get_task_id_from_create_tx: tx failed status=%s", receipt.get("status"))
+            return None
+
+        task_market = Web3.to_checksum_address(settings.TASK_MARKET_ADDRESS)
+        contract = w3.eth.contract(address=task_market, abi=ABI_TASK_MARKET)
+
+        # Method 1: decode via contract event (most reliable)
+        try:
+            processed = contract.events.TaskCreated().process_receipt(receipt)
+            if processed:
+                args = processed[0].args
+                task_id = getattr(args, "taskId", None) or (args[0] if isinstance(args, (list, tuple)) else None)
+                if task_id is not None:
+                    task_id = int(task_id)
+                    logger.info("get_task_id_from_create_tx: taskId=%s from TaskCreated event", task_id)
+                    return task_id
+        except Exception as decode_err:
+            logger.debug("get_task_id_from_create_tx: process_receipt failed %s, trying manual parse", decode_err)
+
+        # Method 2: manual topics (TaskCreated: topics[0]=sig, topics[1]=taskId, topics[2]=poster)
+        task_market_lower = settings.TASK_MARKET_ADDRESS.strip().lower()
+        logs = receipt.get("logs") or receipt.get("log") or []
+        for log in logs:
+            addr = log.get("address")
+            if not addr or addr.lower() != task_market_lower:
+                continue
+            topics = log.get("topics") or []
+            if len(topics) >= 2:
+                task_id = int(topics[1], 16)
+                logger.info("get_task_id_from_create_tx: taskId=%s from topics", task_id)
+                return task_id
+
+        # Retry once (Revive may index logs slightly later)
+        logger.warning("get_task_id_from_create_tx: no TaskCreated in receipt, retry in 3s")
+        time.sleep(3)
+        receipt = w3.eth.get_transaction_receipt(tx_hash_hex)
+        if not receipt or not _receipt_succeeded(receipt):
+            return None
+        try:
+            processed = contract.events.TaskCreated().process_receipt(receipt)
+            if processed:
+                args = processed[0].args
+                tid = getattr(args, "taskId", None) or (args[0] if isinstance(args, (list, tuple)) else None)
+                if tid is not None:
+                    return int(tid)
+        except Exception:
+            pass
+        logs = receipt.get("logs") or receipt.get("log") or []
+        for log in logs:
+            addr = log.get("address")
+            if not addr or addr.lower() != task_market_lower:
+                continue
+            topics = log.get("topics") or []
+            if len(topics) >= 2:
+                return int(topics[1], 16)
+        logger.warning("get_task_id_from_create_tx: no TaskCreated after retry (receipt keys=%s)", list(receipt.keys()) if receipt else None)
+        return None
+    except Exception as e:
+        logger.warning("get_task_id_from_create_tx %s: %s", tx_hash_hex[:18], e)
+        return None
 
 
 def create_task_on_chain(poster_agent_id: str, title: str, reward_wei: int) -> Optional[tuple[int, str]]:
@@ -359,9 +520,9 @@ def create_task_on_chain(poster_agent_id: str, title: str, reward_wei: int) -> O
 
 
 def accept_task_on_chain(task_id: int, acceptor_agent_id: str, reward_recipient_address: str) -> Optional[str]:
-    """TaskMarket.acceptTask(taskId, acceptorAgentId, rewardRecipient). reward_recipient_address = claimer's wallet (receives COG on complete). Returns tx_hash or None."""
-    if not settings.revive_configured or not settings.TASK_MARKET_ADDRESS:
-        logger.warning("accept_task_on_chain: skip (revive not configured or no TASK_MARKET)")
+    """TaskMarket.acceptTaskFor(...). reward_recipient_address = claimer's wallet (receives IVE on complete). Returns tx_hash or None."""
+    if not settings.TASK_MARKET_ADDRESS or not settings.TASK_MARKET_ADDRESS.strip():
+        logger.warning("accept_task_on_chain: skip (no TASK_MARKET_ADDRESS)")
         return None
     if not reward_recipient_address or not reward_recipient_address.strip():
         logger.warning("accept_task_on_chain: skip (empty reward_recipient_address)")
@@ -378,7 +539,7 @@ def accept_task_on_chain(task_id: int, acceptor_agent_id: str, reward_recipient_
         return None
     tx_hash = _send_tx(
         w3, account, settings.TASK_MARKET_ADDRESS, ABI_TASK_MARKET,
-        "acceptTask", (task_id, acceptor_agent_id, recipient), 150_000,
+        "acceptTaskFor", (task_id, acceptor_agent_id, recipient, recipient), 500_000,
     )
     if tx_hash:
         logger.info("accept_task_on_chain: ok task_id=%s reward_recipient=%s tx_hash=%s", task_id, recipient, tx_hash)
@@ -388,23 +549,90 @@ def accept_task_on_chain(task_id: int, acceptor_agent_id: str, reward_recipient_
 
 
 def complete_task_on_chain(task_id: int) -> Optional[str]:
-    """TaskMarket.completeTask(taskId). Returns tx_hash or None."""
-    if not settings.revive_configured or not settings.TASK_MARKET_ADDRESS:
-        logger.warning("complete_task_on_chain: skip (revive not configured or no TASK_MARKET)")
+    """TaskMarket.completeTaskFor/completeTask(taskId). Sends IVE to rewardRecipient. Returns tx_hash or None."""
+    if not settings.TASK_MARKET_ADDRESS or not settings.TASK_MARKET_ADDRESS.strip():
+        logger.warning("complete_task_on_chain: skip (no TASK_MARKET_ADDRESS)")
         return None
     account = _get_deployer_account()
     w3 = _w3()
     if not account or not w3:
         logger.warning("complete_task_on_chain: skip (no deployer or w3)")
         return None
-    tx_hash = _send_tx(
-        w3, account, settings.TASK_MARKET_ADDRESS, ABI_TASK_MARKET,
-        "completeTask", (task_id,), 150_000,
+    logger.info("complete_task_on_chain: sender=%s task_id=%s (must be contract relayer/poster)", account.address, task_id)
+
+    # Fetch task from chain directly (no revive_configured dependency) so idempotency and deployer_is_poster work.
+    on_chain: Optional[dict[str, Any]] = None
+    try:
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(settings.TASK_MARKET_ADDRESS),
+            abi=ABI_TASK_MARKET,
+        )
+        raw = contract.functions.getTask(task_id).call()
+        status_map = {0: "open", 1: "accepted", 2: "completed", 3: "cancelled"}
+        on_chain = {"status": status_map.get(raw[5], "unknown"), "poster": raw[1]}
+    except Exception as e:
+        logger.warning("complete_task_on_chain: getTask(task_id=%s) failed: %s", task_id, e)
+
+    # Idempotency: if task already completed on-chain, treat as success.
+    if on_chain and on_chain.get("status") == "completed":
+        logger.info("complete_task_on_chain: task_id=%s already completed on chain (idempotent)", task_id)
+        # Sentinel hash indicating success without new tx (not a real tx hash but signals ok to caller).
+        return "0x" + "0" * 63 + "1"
+
+    # Prefer completeTask when deployer is also the poster; otherwise use completeTaskFor as relayer.
+    deployer_is_poster = (
+        on_chain is not None
+        and str(on_chain.get("poster", "")).lower() == account.address.lower()
     )
+    fn_name = "completeTask" if deployer_is_poster else "completeTaskFor"
+    logger.info("complete_task_on_chain: using %s (deployer_is_poster=%s)", fn_name, deployer_is_poster)
+
+    tx_hash: Optional[str] = None
+
+    # Primary attempts with chosen function (with retries and gas bump).
+    for delay, gas in ((0, 500_000), (5, 500_000), (8, 800_000)):
+        if delay:
+            time.sleep(delay)
+        tx_hash = _send_tx(
+            w3,
+            account,
+            settings.TASK_MARKET_ADDRESS,
+            ABI_TASK_MARKET,
+            fn_name,
+            (task_id,),
+            gas,
+        )
+        if tx_hash:
+            break
+
+    # Fallback: if relayer path failed and deployer is not poster, try direct poster-style completeTask.
+    if not tx_hash and not deployer_is_poster:
+        logger.warning(
+            "complete_task_on_chain: %s failed, trying completeTask fallback for task_id=%s",
+            fn_name,
+            task_id,
+        )
+        tx_hash = _send_tx(
+            w3,
+            account,
+            settings.TASK_MARKET_ADDRESS,
+            ABI_TASK_MARKET,
+            "completeTask",
+            (task_id,),
+            500_000,
+        )
+
     if tx_hash:
+        ok = wait_for_receipt(tx_hash, 60)
+        if not ok:
+            logger.warning("complete_task_on_chain: completeTask tx reverted for task_id=%s", task_id)
+            return None
         logger.info("complete_task_on_chain: ok task_id=%s tx_hash=%s", task_id, tx_hash)
     else:
-        logger.warning("complete_task_on_chain: completeTask tx failed for task_id=%s (task may not be Accepted on chain)", task_id)
+        logger.warning(
+            "complete_task_on_chain: completeTask tx failed for task_id=%s (task may not be Accepted on chain)",
+            task_id,
+        )
     return tx_hash
 
 

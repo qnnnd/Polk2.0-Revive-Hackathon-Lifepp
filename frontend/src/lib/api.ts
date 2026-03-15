@@ -195,6 +195,12 @@ export const marketplaceApi = {
   publish: (data: TaskListingCreate) =>
     apiFetch<TaskListing>("/tasks", { method: "POST", body: JSON.stringify(data) }),
 
+  confirmChainCreated: (listingId: string, txHash: string) =>
+    apiFetch<TaskListing>(`/tasks/${listingId}/chain_created`, {
+      method: "PATCH",
+      body: JSON.stringify({ tx_hash: txHash }),
+    }),
+
   list: (params?: { status?: string; page?: number; page_size?: number }) =>
     apiFetch<TaskListing[]>("/tasks", { params }),
 

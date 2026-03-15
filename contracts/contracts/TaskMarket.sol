@@ -26,6 +26,13 @@ contract TaskMarket {
     uint256 public nextTaskId;
     mapping(uint256 => TaskInfo) public tasks;
 
+    /// @dev Relayer (e.g. backend) can accept on behalf of users so backend can submit accept tx without user signing.
+    address public relayer;
+
+    constructor() {
+        relayer = msg.sender;
+    }
+
     event TaskCreated(uint256 indexed taskId, address indexed poster, uint256 reward);
     event TaskAccepted(uint256 indexed taskId, address indexed acceptor, string acceptorAgentId);
     event TaskCompleted(uint256 indexed taskId, uint256 reward);
@@ -72,11 +79,45 @@ contract TaskMarket {
         emit TaskAccepted(taskId, msg.sender, acceptorAgentId);
     }
 
+    /// @notice Relayer (backend) accepts the task on behalf of acceptorAddress. Caller must be relayer.
+    function acceptTaskFor(
+        uint256 taskId,
+        string calldata acceptorAgentId,
+        address rewardRecipient,
+        address acceptorAddress
+    ) external {
+        require(msg.sender == relayer, "Only relayer");
+        TaskInfo storage t = tasks[taskId];
+        require(t.status == TaskStatus.Open, "Task not open");
+        require(acceptorAddress != address(0) && acceptorAddress != t.poster, "Invalid acceptor");
+        require(rewardRecipient != address(0), "Reward recipient required");
+
+        t.status = TaskStatus.Accepted;
+        t.acceptor = acceptorAddress;
+        t.acceptorAgentId = acceptorAgentId;
+        t.rewardRecipient = rewardRecipient;
+
+        emit TaskAccepted(taskId, acceptorAddress, acceptorAgentId);
+    }
+
     function completeTask(uint256 taskId) external {
         TaskInfo storage t = tasks[taskId];
         require(t.status == TaskStatus.Accepted, "Task not accepted");
         require(t.poster == msg.sender, "Only poster can confirm completion");
 
+        _completeTaskLogic(taskId, t);
+    }
+
+    /// @notice Relayer can complete on behalf of the poster (e.g. when poster is a frontend user and backend submits).
+    function completeTaskFor(uint256 taskId) external {
+        require(msg.sender == relayer, "Only relayer");
+        TaskInfo storage t = tasks[taskId];
+        require(t.status == TaskStatus.Accepted, "Task not accepted");
+
+        _completeTaskLogic(taskId, t);
+    }
+
+    function _completeTaskLogic(uint256 taskId, TaskInfo storage t) internal {
         t.status = TaskStatus.Completed;
         t.completedAt = block.timestamp;
 
