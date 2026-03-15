@@ -6,6 +6,7 @@ All chain-derived data for 13.4 compliance must go through this service.
 from __future__ import annotations
 
 import logging
+import time
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -298,11 +299,16 @@ def deployer_cog_balance_wei() -> Optional[int]:
 
 
 def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, args: tuple, gas: int = 300_000) -> Optional[str]:
-    """Build, sign, send tx; return tx_hash hex or None."""
+    """Build, sign, send tx; return tx_hash hex or None. Sets chainId and gasPrice for Substrate/Frontier."""
     try:
         contract = w3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=abi)
         fn = getattr(contract.functions, fn_name)(*args)
-        tx = fn.build_transaction({"from": account.address, "gas": gas})
+        chain_id = w3.eth.chain_id
+        gas_price = w3.eth.gas_price
+        if gas_price and gas_price > 0:
+            tx = fn.build_transaction({"from": account.address, "gas": gas, "chainId": chain_id, "gasPrice": gas_price})
+        else:
+            tx = fn.build_transaction({"from": account.address, "gas": gas, "chainId": chain_id})
         tx["nonce"] = w3.eth.get_transaction_count(account.address)
         signed = account.sign_transaction(tx)
         tx_hash_bytes = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -310,6 +316,16 @@ def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, 
     except (ContractLogicError, ValueError, Exception) as e:
         logger.warning("_send_tx %s(%s) failed: %s", fn_name, contract_address[:10], e)
         return None
+
+
+def _wait_for_receipt(w3: Web3, tx_hash_hex: str, timeout_seconds: int = 60) -> bool:
+    """Wait for tx to be mined. Returns True if receipt status is success, False on timeout or failure."""
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash_hex, timeout=timeout_seconds)
+        return receipt.get("status") == 1
+    except Exception as e:
+        logger.warning("_wait_for_receipt %s: %s", tx_hash_hex[:18], e)
+        return False
 
 
 def register_agent(agent_id: str, name: str, metadata_uri: str = "") -> Optional[str]:
@@ -361,8 +377,15 @@ def create_task_on_chain(poster_agent_id: str, title: str, reward_wei: int) -> O
         if chain_task_id is None:
             logger.warning("create_task_on_chain: next_task_id() returned None")
             return None
-        if not approve_cog(settings.TASK_MARKET_ADDRESS, reward_wei):
+        approve_hash = approve_cog(settings.TASK_MARKET_ADDRESS, reward_wei)
+        if not approve_hash:
+            time.sleep(3)
+            approve_hash = approve_cog(settings.TASK_MARKET_ADDRESS, reward_wei)
+        if not approve_hash:
             logger.warning("create_task_on_chain: approve_cog failed (deployer may have insufficient COG or allowance)")
+            return None
+        if not _wait_for_receipt(w3, approve_hash):
+            logger.warning("create_task_on_chain: approve tx not mined or failed; skipping createTask")
             return None
         tx_hash = _send_tx(
             w3, account, settings.TASK_MARKET_ADDRESS, ABI_TASK_MARKET,

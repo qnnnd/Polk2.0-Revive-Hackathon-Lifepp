@@ -109,6 +109,19 @@
 
 ---
 
+## 8. E2E 任务与代币脚本（Test-Creator / Test-Worker）
+
+**用途**：用用户 A（Test-Creator）、B（Test-Worker）自动跑完「发布 → 认领 → 完成」并校验 COG 扣款与发放。
+
+| 步骤 | 命令 | 说明 |
+|------|------|------|
+| 8.1 | `./backend/.venv/bin/python scripts/e2e_task_cog_test.py --no-chain` | 仅验证 API 流程（reward=0，不依赖链）；A 发任务 → B 认领 → A 完成，再 B 发 → A 认领 → B 完成 |
+| 8.2 | `./backend/.venv/bin/python scripts/e2e_task_cog_test.py` | 完整流程：带奖励、链上扣款与发放。需本地 Revive 节点接受交易（若出现 1010/1012 则链未放行，先跑 8.1 验证接口） |
+
+用户 A 地址：`0xf24FF3a9CF04c71Dbc94D0b566f7A27B94566cac`，用户 B：`0x3Cd0A705a2DC65e5b1E1205896BaA2be8A07c6e0`。脚本会先为两者设置钱包并拉取 Agent，再按阶段发布/认领/完成并（在非 `--no-chain` 时）校验 deployer 与 B/A 的 COG 余额变化。
+
+---
+
 ## 快速检查清单
 
 - [ ] 登录 / 登出（用户名 + Enter Life++）
