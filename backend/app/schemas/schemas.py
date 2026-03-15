@@ -24,6 +24,10 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class UserWalletUpdate(BaseModel):
+    wallet_address: Optional[str] = None
+
+
 class ReputationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

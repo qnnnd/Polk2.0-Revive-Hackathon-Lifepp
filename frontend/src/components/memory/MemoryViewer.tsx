@@ -109,7 +109,7 @@ export function MemoryViewer({ agentId }: MemoryViewerProps) {
             setIsSearching(true);
           }}
           placeholder="Semantic search across memories…"
-          className="w-full bg-surface2 border border-border rounded-xl px-4 py-2.5 text-sm placeholder:text-muted outline-none focus:border-accent/50 transition-colors font-mono"
+          className="form-input w-full rounded-xl px-4 py-2.5 text-sm font-mono"
         />
         {isSearching && searchQuery && (
           <button

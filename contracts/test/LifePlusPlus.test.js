@@ -66,8 +66,8 @@ describe("Life++ Smart Contracts", function () {
       expect(task.status).to.equal(0); // Open
       expect(task.rewardAmount).to.equal(reward);
 
-      // Bob accepts the task
-      await taskMarket.connect(bob).acceptTask(0, "agent-bob");
+      // Bob accepts the task (rewardRecipient = bob so Bob receives COG on complete)
+      await taskMarket.connect(bob).acceptTask(0, "agent-bob", bob.address);
       task = await taskMarket.getTask(0);
       expect(task.status).to.equal(1); // Accepted
 

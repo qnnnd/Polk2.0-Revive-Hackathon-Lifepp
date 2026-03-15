@@ -8,10 +8,13 @@
     "deploy:local": "npx hardhat run scripts/deploy.js --network localhost",
     "deploy:revive": "npx hardhat run scripts/deploy.js --network revive",
     "deploy:revive-local": "npx hardhat run scripts/deploy.js --network revive-local",
+    "claim:revive-local": "npx hardhat run scripts/claim-local-tokens.js",
+    "mint:cog": "npx hardhat run scripts/mint-cog-to-deployer.js --network revive-local",
     "node": "npx hardhat node"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.3.1",
     "hardhat": "^2.22.0"
   },
   "dependencies": {

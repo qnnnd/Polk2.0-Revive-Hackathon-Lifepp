@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Topbar } from "@/components/ui/Topbar";
 import {
@@ -10,18 +11,29 @@ import {
   useCreateAgent,
   useNetworkStats,
   useMarketplaceTasks,
+  queryKeys,
 } from "@/hooks/useApi";
+import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken, setAccessToken, authApi } from "@/lib/api";
+import { MemoryViewer } from "@/components/memory/MemoryViewer";
 import type { Agent } from "@/types";
 
 export default function DashboardPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (getAccessToken()) setIsLoggedIn(true);
   }, []);
+
+  const invalidateUserData = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+    queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    queryClient.invalidateQueries({ queryKey: ["memories"] });
+  };
 
   const handleLogin = async () => {
     if (!username.trim()) return;
@@ -35,6 +47,7 @@ export default function DashboardPage() {
       });
       const tokenRes = await authApi.login(username.trim());
       setAccessToken(tokenRes.access_token);
+      invalidateUserData();
       setIsLoggedIn(true);
       toast.success("Welcome to Life++!");
     } catch (err: any) {
@@ -42,6 +55,7 @@ export default function DashboardPage() {
         try {
           const tokenRes = await authApi.login(username.trim());
           setAccessToken(tokenRes.access_token);
+          invalidateUserData();
           setIsLoggedIn(true);
           toast.success(`Welcome back, ${username}!`);
         } catch {
@@ -82,6 +96,9 @@ export default function DashboardPage() {
 }
 
 function DashboardContent() {
+  const searchParams = useSearchParams();
+  const tab = searchParams.get("tab") ?? "overview"; // overview | agents | memory
+
   const { data: agentsData } = useAgents();
   const { data: stats } = useNetworkStats();
   const { data: chainStats } = useChainStats();
@@ -95,6 +112,14 @@ function DashboardContent() {
   const pendingTasks = Array.isArray(marketTasks)
     ? marketTasks.filter((t) => t.status === "open" || t.status === "pending").length
     : 0;
+
+  // For MemoryViewer: need to pick an agent
+  const [memoryAgentId, setMemoryAgentId] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab === "memory" && agents.length > 0 && !memoryAgentId) {
+      setMemoryAgentId(agents[0].id);
+    }
+  }, [tab, agents, memoryAgentId]);
 
   const handleCreateAgent = async () => {
     try {
@@ -110,6 +135,91 @@ function DashboardContent() {
     }
   };
 
+  // Tab: AgentChat — list agents, click to open chat
+  if (tab === "agents") {
+    return (
+      <>
+        <Topbar title="AgentChat" description="Select an agent to chat" />
+        <div className="page-content">
+          <div className="card">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <h3 style={{ margin: 0 }}>AgentChat</h3>
+              <button
+                className="btn-brand"
+                onClick={handleCreateAgent}
+                disabled={createAgent.isPending}
+                style={{ fontSize: 12, padding: "6px 16px" }}
+              >
+                {createAgent.isPending ? "Creating..." : "+ New Agent"}
+              </button>
+            </div>
+            {agents.length === 0 ? (
+              <p style={{ color: "var(--text-3)", fontSize: 13 }}>
+                No agents yet. Create one to start chatting.
+              </p>
+            ) : (
+              agents.map((agent) => (
+                <Link
+                  key={agent.id}
+                  href={`/agents/${agent.id}`}
+                  style={{ textDecoration: "none", color: "inherit" }}
+                >
+                  <div className="item">
+                    <div className="avatar">{agent.name[0]}</div>
+                    <div className="info">
+                      <div className="name">{agent.name}</div>
+                      <div className="role">{agent.capabilities?.join(", ") || "general"}</div>
+                    </div>
+                    <span className="tag brand2">Chat →</span>
+                  </div>
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Tab: MemoryViewer — select agent then show memory
+  if (tab === "memory") {
+    return (
+      <>
+        <Topbar title="MemoryViewer" description="View and search agent memory" />
+        <div className="page-content">
+          {agents.length === 0 ? (
+            <div className="card">
+              <p style={{ color: "var(--text-3)", fontSize: 13 }}>
+                No agents yet. Create an agent first to view memory.
+              </p>
+              <button className="btn-brand" onClick={handleCreateAgent} disabled={createAgent.isPending} style={{ marginTop: 12 }}>
+                {createAgent.isPending ? "Creating..." : "+ New Agent"}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="card" style={{ marginBottom: 16 }}>
+                <label style={{ marginRight: 8, fontSize: 13 }}>Select agent:</label>
+                <select
+                  value={memoryAgentId ?? ""}
+                  onChange={(e) => setMemoryAgentId(e.target.value)}
+                  className="form-input"
+                  style={{ minWidth: 200, width: "auto" }}
+                >
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              {memoryAgentId && <MemoryViewer agentId={memoryAgentId} />}
+            </>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  // Tab: overview (default)
   return (
     <>
       <Topbar title="Dashboard" description="Agent overview and system status" />

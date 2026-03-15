@@ -8,7 +8,12 @@ import {
   useChainConfig,
   useMarketplaceTasks,
   usePublishTask,
+  useCancelListing,
+  useAcceptTask,
+  useCompleteTask,
+  queryKeys,
 } from "@/hooks/useApi";
+import { useQueryClient } from "@tanstack/react-query";
 import { getAccessToken, setAccessToken, authApi } from "@/lib/api";
 import type { TaskListing } from "@/types";
 
@@ -18,10 +23,23 @@ export default function MarketplacePage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (getAccessToken()) setIsLoggedIn(true);
   }, []);
+
+  // When already logged in (e.g. page load with token), ensure cache matches current user.
+  useEffect(() => {
+    if (isLoggedIn) invalidateUserData();
+  }, [isLoggedIn]);
+
+  const invalidateUserData = () => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+    queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    queryClient.invalidateQueries({ queryKey: ["memories"] });
+  };
 
   const handleLogin = async () => {
     if (!username.trim()) return;
@@ -31,6 +49,7 @@ export default function MarketplacePage() {
       await authApi.register({ did, username: username.trim(), display_name: username.trim() });
       const tokenRes = await authApi.login(username.trim());
       setAccessToken(tokenRes.access_token);
+      invalidateUserData();
       setIsLoggedIn(true);
       toast.success("Welcome to Life++!");
     } catch (err: any) {
@@ -38,6 +57,7 @@ export default function MarketplacePage() {
         try {
           const tokenRes = await authApi.login(username.trim());
           setAccessToken(tokenRes.access_token);
+          invalidateUserData();
           setIsLoggedIn(true);
           toast.success(`Welcome back, ${username}!`);
         } catch {
@@ -82,6 +102,16 @@ function MarketplaceContent() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [reward, setReward] = useState("");
+  const [acceptAgentByListingId, setAcceptAgentByListingId] = useState<Record<string, string>>({});
+  const queryClient = useQueryClient();
+
+  // Ensure user-scoped data is fresh when viewing marketplace (e.g. after token change or new tab).
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: queryKeys.agents.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+    queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    queryClient.invalidateQueries({ queryKey: ["memories"] });
+  }, [queryClient]);
 
   const { data: agentsData } = useAgents();
   const { data: chainConfig } = useChainConfig();
@@ -89,9 +119,23 @@ function MarketplaceContent() {
     filter !== "all" ? { status: filter } : undefined
   );
   const publishTask = usePublishTask();
+  const cancelListing = useCancelListing();
+  const acceptTask = useAcceptTask();
+  const completeTask = useCompleteTask();
 
   const agents = agentsData?.agents ?? [];
+  const myAgentIds = new Set(agents.map((a) => a.id));
   const allTasks: TaskListing[] = Array.isArray(tasks) ? tasks : [];
+  const canCancel = (task: TaskListing) =>
+    task.status === "open" && myAgentIds.has(task.poster_agent_id);
+  const canAccept = (task: TaskListing) =>
+    task.status === "open" && !myAgentIds.has(task.poster_agent_id) && agents.length > 0;
+  const couldAcceptButNoAgent = (task: TaskListing) =>
+    task.status === "open" && !myAgentIds.has(task.poster_agent_id) && agents.length === 0;
+  const canComplete = (task: TaskListing) =>
+    task.status === "accepted" && myAgentIds.has(task.poster_agent_id);
+  const isAcceptedWaitingForPublisher = (task: TaskListing) =>
+    task.status === "accepted" && !myAgentIds.has(task.poster_agent_id);
 
   const handlePublish = async () => {
     if (!title.trim()) {
@@ -119,6 +163,7 @@ function MarketplaceContent() {
       case "escrowed": return "amber";
       case "running": return "cyan";
       case "completed": case "done": return "brand2";
+      case "cancelled": return "red";
       default: return "";
     }
   };
@@ -129,6 +174,7 @@ function MarketplaceContent() {
       case "escrowed": return 40;
       case "running": return 65;
       case "completed": case "done": return 100;
+      case "cancelled": return 0;
       default: return 10;
     }
   };
@@ -191,6 +237,141 @@ function MarketplaceContent() {
                     {task.winning_agent_id && (
                       <span className="tag cyan">Agent: {task.winning_agent_id.slice(0, 8)}</span>
                     )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
+                    {couldAcceptButNoAgent(task) && (
+                      <a
+                        href="/dashboard?tab=agents"
+                        style={{
+                          fontSize: 11,
+                          color: "var(--text-3)",
+                          textDecoration: "underline",
+                        }}
+                        title="Create an agent on Dashboard first, then you can accept tasks"
+                      >
+                        Need an agent to accept →
+                      </a>
+                    )}
+                    {canAccept(task) && (
+                      <>
+                        <select
+                          className="form-input"
+                          value={acceptAgentByListingId[task.id] ?? ""}
+                          onChange={(e) =>
+                            setAcceptAgentByListingId((prev) => ({
+                              ...prev,
+                              [task.id]: e.target.value,
+                            }))
+                          }
+                          style={{
+                            fontSize: 11,
+                            padding: "4px 8px",
+                            minWidth: 100,
+                            borderRadius: 6,
+                            border: "1px solid var(--border)",
+                            background: "var(--panel-2)",
+                            color: "var(--text-1)",
+                          }}
+                        >
+                          <option value="">Select agent</option>
+                          {agents.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const agentId = acceptAgentByListingId[task.id];
+                            if (!agentId) {
+                              toast.error("Please select an agent");
+                              return;
+                            }
+                            acceptTask.mutate(
+                              { listingId: task.id, agentId },
+                              {
+                                onSuccess: () => {
+                                  toast.success("Task accepted");
+                                  setAcceptAgentByListingId((prev) => {
+                                    const next = { ...prev };
+                                    delete next[task.id];
+                                    return next;
+                                  });
+                                },
+                                onError: (err: any) =>
+                                  toast.error(err?.message ?? "Failed to accept task"),
+                              }
+                            );
+                          }}
+                          disabled={acceptTask.isPending}
+                          style={{
+                            fontSize: 11,
+                            padding: "4px 10px",
+                            border: "1px solid var(--green)",
+                            color: "var(--green)",
+                            background: "transparent",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {acceptTask.isPending ? "..." : "Accept"}
+                        </button>
+                      </>
+                    )}
+                    {isAcceptedWaitingForPublisher(task) && (
+                      <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-3)" }}>
+                        Waiting for publisher to complete
+                      </span>
+                    )}
+                    {canComplete(task) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          completeTask.mutate(task.id, {
+                            onSuccess: () => toast.success("Task completed"),
+                            onError: (err: any) =>
+                              toast.error(err?.message ?? "Failed to complete task"),
+                          });
+                        }}
+                        disabled={completeTask.isPending}
+                        style={{
+                          marginLeft: "auto",
+                          fontSize: 11,
+                          padding: "4px 10px",
+                          border: "1px solid var(--cyan)",
+                          color: "var(--cyan)",
+                          background: "transparent",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {completeTask.isPending ? "..." : "Complete"}
+                      </button>
+                    )}
+                    {canCancel(task) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          cancelListing.mutate(task.id, {
+                            onSuccess: () => toast.success("Task cancelled"),
+                            onError: (err: any) => toast.error(err?.message ?? "Failed to cancel"),
+                          });
+                        }}
+                        disabled={cancelListing.isPending}
+                        style={{
+                          fontSize: 11,
+                          padding: "4px 10px",
+                          border: "1px solid var(--red)",
+                          color: "var(--red)",
+                          background: "transparent",
+                          borderRadius: 8,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    </div>
                   </div>
                   <div className="task-title">{task.title}</div>
                   {task.description && <div className="task-desc">{task.description}</div>}

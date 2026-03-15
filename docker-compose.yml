@@ -47,7 +47,7 @@ services:
     container_name: lpp-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8002:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://lifeplusplus:lifeplusplus@postgres:5432/lifeplusplus
       REDIS_URL: redis://redis:6379/0
@@ -81,7 +81,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8002
     depends_on:
       backend:
         condition: service_healthy

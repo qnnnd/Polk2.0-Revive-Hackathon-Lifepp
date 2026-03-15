@@ -42,13 +42,26 @@ export function NetworkGraph() {
   const nodes = graph?.nodes ?? [];
   const edges = graph?.edges ?? [];
 
-  // Normalize node positions to fit dimensions
-  const normalizeNodes = (nodes: NetworkNode[], w: number, h: number) =>
-    nodes.map((n) => ({
+  // Backend places nodes in a circle (x,y in ~[-200,200]). Fit into viewBox so all nodes are visible.
+  const normalizeNodes = (ns: NetworkNode[], w: number, h: number) => {
+    if (ns.length === 0) return [];
+    const xs = ns.map((n) => n.x ?? 0);
+    const ys = ns.map((n) => n.y ?? 0);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const rangeX = maxX - minX || 1;
+    const rangeY = maxY - minY || 1;
+    const padding = 60;
+    const width = w - 2 * padding;
+    const height = h - 2 * padding;
+    return ns.map((n) => ({
       ...n,
-      cx: ((n.x ?? 500) / 1000) * (w - 120) + 60,
-      cy: ((n.y ?? 300) / 600) * (h - 100) + 50,
+      cx: padding + ((n.x ?? 0) - minX) / rangeX * width,
+      cy: padding + ((n.y ?? 0) - minY) / rangeY * height,
     }));
+  };
 
   const positioned = normalizeNodes(nodes, dimensions.w, dimensions.h);
   const nodeMap = new Map(positioned.map((n) => [n.id, n]));

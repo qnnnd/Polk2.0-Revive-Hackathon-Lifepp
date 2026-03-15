@@ -44,6 +44,17 @@ class AuthService:
         )
         return result.scalar_one_or_none()
 
+    async def update_wallet_address(self, user_id: uuid.UUID, wallet_address: Optional[str]) -> User:
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        user.wallet_address = wallet_address
+        self.db.add(user)
+        await self.db.flush()
+        await self.db.refresh(user)
+        return user
+
     @staticmethod
     def create_token(user: User) -> str:
         now = datetime.now(timezone.utc)

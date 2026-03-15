@@ -29,7 +29,9 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     MAX_TOKENS: int = 4096
 
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002"
+
+    PORT: int = 8002  # Backend server port (default 8002 to avoid conflict with 8000/8001)
 
     API_V1_PREFIX: str = "/api/v1"
 

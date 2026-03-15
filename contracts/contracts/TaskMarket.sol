@@ -20,6 +20,7 @@ contract TaskMarket {
         TaskStatus status;
         address    acceptor;
         string     acceptorAgentId;
+        address    rewardRecipient;  // address that receives COG on completion (e.g. claimer's wallet)
         uint256    createdAt;
         uint256    completedAt;
     }
@@ -55,6 +56,7 @@ contract TaskMarket {
             status: TaskStatus.Open,
             acceptor: address(0),
             acceptorAgentId: "",
+            rewardRecipient: address(0),
             createdAt: block.timestamp,
             completedAt: 0
         });
@@ -63,14 +65,16 @@ contract TaskMarket {
         return taskId;
     }
 
-    function acceptTask(uint256 taskId, string calldata acceptorAgentId) external {
+    function acceptTask(uint256 taskId, string calldata acceptorAgentId, address rewardRecipient) external {
         TaskInfo storage t = tasks[taskId];
         require(t.status == TaskStatus.Open, "Task not open");
         require(t.poster != msg.sender, "Cannot accept own task");
+        require(rewardRecipient != address(0), "Reward recipient required");
 
         t.status = TaskStatus.Accepted;
         t.acceptor = msg.sender;
         t.acceptorAgentId = acceptorAgentId;
+        t.rewardRecipient = rewardRecipient;
 
         emit TaskAccepted(taskId, msg.sender, acceptorAgentId);
     }
@@ -83,7 +87,8 @@ contract TaskMarket {
         t.status = TaskStatus.Completed;
         t.completedAt = block.timestamp;
 
-        require(cogToken.transfer(t.acceptor, t.rewardAmount), "Reward transfer failed");
+        address payoutTo = t.rewardRecipient != address(0) ? t.rewardRecipient : t.acceptor;
+        require(cogToken.transfer(payoutTo, t.rewardAmount), "Reward transfer failed");
 
         emit TaskCompleted(taskId, t.rewardAmount);
     }

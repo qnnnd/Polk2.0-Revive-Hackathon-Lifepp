@@ -237,6 +237,16 @@ export function useCompleteTask() {
   });
 }
 
+export function useCancelListing() {
+  const qc = useQueryClient();
+  return useMutation<TaskListing, ApiError, string>({
+    mutationFn: (listingId) => marketplaceApi.cancel(listingId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.marketplace.all });
+    },
+  });
+}
+
 export function useNetworkGraph() {
   return useQuery({
     queryKey: queryKeys.network.graph,

@@ -212,6 +212,10 @@ body {
   background: rgba(110, 140, 255, 0.22);
 }
 
+.wallet-menu-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 /* ── Cards ─────────────────────────────────────────── */
 .card {
   background: var(--panel);
@@ -836,6 +840,16 @@ body {
 
 .form-input:focus {
   border-color: var(--brand);
+}
+
+select.form-input {
+  cursor: pointer;
+  appearance: auto;
+}
+
+select.form-input option {
+  background: var(--panel-2);
+  color: var(--text);
 }
 
 .btn-brand {

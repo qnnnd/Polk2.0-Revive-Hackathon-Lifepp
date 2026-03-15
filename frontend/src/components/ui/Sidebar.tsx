@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 const NAV_ITEMS = [
   { icon: "◫", label: "Dashboard", href: "/dashboard" },
@@ -13,13 +13,16 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const tab = searchParams.get("tab");
 
   const isActive = (href: string) => {
-    if (href === "/dashboard" && pathname === "/dashboard") return true;
-    if (href.startsWith("/dashboard?") && pathname === "/dashboard") return false;
+    if (href === "/dashboard" && pathname === "/dashboard" && !tab) return true;
+    if (href === "/dashboard?tab=agents" && pathname === "/dashboard" && tab === "agents") return true;
+    if (href === "/dashboard?tab=memory" && pathname === "/dashboard" && tab === "memory") return true;
     if (href === "/marketplace" && pathname === "/marketplace") return true;
     if (href === "/network" && pathname === "/network") return true;
-    if (pathname?.startsWith("/agents") && href.includes("AgentChat")) return true;
+    if (pathname?.startsWith("/agents") && href === "/dashboard?tab=agents") return true;
     return false;
   };
 

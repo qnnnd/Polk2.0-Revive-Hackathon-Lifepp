@@ -5,6 +5,7 @@ All chain-derived data for 13.4 compliance must go through this service.
 """
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -12,6 +13,8 @@ from web3 import Web3
 from web3.exceptions import ContractLogicError
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # COG has 18 decimals (wei)
 COG_DECIMALS = 18
@@ -94,12 +97,13 @@ ABI_TASK_MARKET = [
         {"name": "status", "type": "uint8"},
         {"name": "acceptor", "type": "address"},
         {"name": "acceptorAgentId", "type": "string"},
+        {"name": "rewardRecipient", "type": "address"},
         {"name": "createdAt", "type": "uint256"},
         {"name": "completedAt", "type": "uint256"},
     ], "stateMutability": "view", "type": "function"},
     {"inputs": [], "name": "nextTaskId", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
     {"inputs": [{"name": "posterAgentId", "type": "string"}, {"name": "title", "type": "string"}, {"name": "rewardAmount", "type": "uint256"}], "name": "createTask", "outputs": [{"type": "uint256"}], "stateMutability": "nonpayable", "type": "function"},
-    {"inputs": [{"name": "taskId", "type": "uint256"}, {"name": "acceptorAgentId", "type": "string"}], "name": "acceptTask", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "taskId", "type": "uint256"}, {"name": "acceptorAgentId", "type": "string"}, {"name": "rewardRecipient", "type": "address"}], "name": "acceptTask", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
     {"inputs": [{"name": "taskId", "type": "uint256"}], "name": "completeTask", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
 ]
 ABI_REPUTATION = [
@@ -188,8 +192,9 @@ def get_task(task_id: int) -> Optional[dict[str, Any]]:
             "status_raw": int(raw[5]),
             "acceptor": raw[6],
             "acceptorAgentId": raw[7],
-            "createdAt": raw[8],
-            "completedAt": raw[9],
+            "rewardRecipient": raw[8],
+            "createdAt": raw[9],
+            "completedAt": raw[10],
         }
     except Exception:
         return None
@@ -273,6 +278,25 @@ def _get_deployer_account():
         return None
 
 
+def deployer_cog_balance_wei() -> Optional[int]:
+    """COG balance of the deployer account in wei. Returns None if not configured or RPC error."""
+    account = _get_deployer_account()
+    if not account:
+        return None
+    if not settings.revive_configured or not settings.COG_TOKEN_ADDRESS:
+        return None
+    w3 = _w3()
+    if not w3:
+        return None
+    try:
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(settings.COG_TOKEN_ADDRESS), abi=ABI_COG
+        )
+        return contract.functions.balanceOf(Web3.to_checksum_address(account.address)).call()
+    except Exception:
+        return None
+
+
 def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, args: tuple, gas: int = 300_000) -> Optional[str]:
     """Build, sign, send tx; return tx_hash hex or None."""
     try:
@@ -283,7 +307,8 @@ def _send_tx(w3: Web3, account, contract_address: str, abi: list, fn_name: str, 
         signed = account.sign_transaction(tx)
         tx_hash_bytes = w3.eth.send_raw_transaction(signed.raw_transaction)
         return w3.to_hex(tx_hash_bytes)
-    except (ContractLogicError, ValueError, Exception):
+    except (ContractLogicError, ValueError, Exception) as e:
+        logger.warning("_send_tx %s(%s) failed: %s", fn_name, contract_address[:10], e)
         return None
 
 
@@ -324,55 +349,83 @@ def create_task_on_chain(poster_agent_id: str, title: str, reward_wei: int) -> O
     Uses deployer as escrow payer.
     """
     if not settings.revive_configured or not settings.TASK_MARKET_ADDRESS or not settings.COG_TOKEN_ADDRESS:
+        logger.warning("create_task_on_chain: skip (revive not configured or missing TASK_MARKET/COG_TOKEN)")
         return None
     account = _get_deployer_account()
     w3 = _w3()
     if not account or not w3:
+        logger.warning("create_task_on_chain: skip (no deployer account or no w3; set REVIVE_DEPLOYER_PRIVATE_KEY and REVIVE_RPC_URL)")
         return None
     try:
         chain_task_id = next_task_id()
         if chain_task_id is None:
+            logger.warning("create_task_on_chain: next_task_id() returned None")
             return None
-        # Approve TaskMarket to pull reward_wei COG
         if not approve_cog(settings.TASK_MARKET_ADDRESS, reward_wei):
+            logger.warning("create_task_on_chain: approve_cog failed (deployer may have insufficient COG or allowance)")
             return None
         tx_hash = _send_tx(
             w3, account, settings.TASK_MARKET_ADDRESS, ABI_TASK_MARKET,
             "createTask", (poster_agent_id, title, reward_wei), 250_000,
         )
         if not tx_hash:
+            logger.warning("create_task_on_chain: createTask tx failed (check deployer balance and gas)")
             return None
+        logger.info("create_task_on_chain: ok chain_task_id=%s tx_hash=%s", chain_task_id, tx_hash)
         return (chain_task_id, tx_hash)
-    except Exception:
+    except Exception as e:
+        logger.exception("create_task_on_chain: exception %s", e)
         return None
 
 
-def accept_task_on_chain(task_id: int, acceptor_agent_id: str) -> Optional[str]:
-    """TaskMarket.acceptTask(taskId, acceptorAgentId). Returns tx_hash or None."""
+def accept_task_on_chain(task_id: int, acceptor_agent_id: str, reward_recipient_address: str) -> Optional[str]:
+    """TaskMarket.acceptTask(taskId, acceptorAgentId, rewardRecipient). reward_recipient_address = claimer's wallet (receives COG on complete). Returns tx_hash or None."""
     if not settings.revive_configured or not settings.TASK_MARKET_ADDRESS:
+        logger.warning("accept_task_on_chain: skip (revive not configured or no TASK_MARKET)")
+        return None
+    if not reward_recipient_address or not reward_recipient_address.strip():
+        logger.warning("accept_task_on_chain: skip (empty reward_recipient_address)")
         return None
     account = _get_deployer_account()
     w3 = _w3()
     if not account or not w3:
+        logger.warning("accept_task_on_chain: skip (no deployer or w3)")
         return None
-    return _send_tx(
+    try:
+        recipient = Web3.to_checksum_address(reward_recipient_address.strip())
+    except Exception as e:
+        logger.warning("accept_task_on_chain: invalid reward_recipient_address %s", e)
+        return None
+    tx_hash = _send_tx(
         w3, account, settings.TASK_MARKET_ADDRESS, ABI_TASK_MARKET,
-        "acceptTask", (task_id, acceptor_agent_id), 150_000,
+        "acceptTask", (task_id, acceptor_agent_id, recipient), 150_000,
     )
+    if tx_hash:
+        logger.info("accept_task_on_chain: ok task_id=%s reward_recipient=%s tx_hash=%s", task_id, recipient, tx_hash)
+    else:
+        logger.warning("accept_task_on_chain: acceptTask tx failed for task_id=%s", task_id)
+    return tx_hash
 
 
 def complete_task_on_chain(task_id: int) -> Optional[str]:
     """TaskMarket.completeTask(taskId). Returns tx_hash or None."""
     if not settings.revive_configured or not settings.TASK_MARKET_ADDRESS:
+        logger.warning("complete_task_on_chain: skip (revive not configured or no TASK_MARKET)")
         return None
     account = _get_deployer_account()
     w3 = _w3()
     if not account or not w3:
+        logger.warning("complete_task_on_chain: skip (no deployer or w3)")
         return None
-    return _send_tx(
+    tx_hash = _send_tx(
         w3, account, settings.TASK_MARKET_ADDRESS, ABI_TASK_MARKET,
         "completeTask", (task_id,), 150_000,
     )
+    if tx_hash:
+        logger.info("complete_task_on_chain: ok task_id=%s tx_hash=%s", task_id, tx_hash)
+    else:
+        logger.warning("complete_task_on_chain: completeTask tx failed for task_id=%s (task may not be Accepted on chain)", task_id)
+    return tx_hash
 
 
 def record_reputation_task_complete(agent_id: str, cog_earned_wei: int) -> Optional[str]:

@@ -24,12 +24,26 @@ export default function NetworkPage() {
   const nodes = graph?.nodes ?? [];
   const edges = graph?.edges ?? [];
 
-  const normalizeNodes = (ns: NetworkNode[]) =>
-    ns.map((n) => ({
+  // Backend places nodes in a circle with radius 200 (x,y in ~[-200,200]). Fit into viewBox 920×560.
+  const normalizeNodes = (ns: NetworkNode[]) => {
+    if (ns.length === 0) return [];
+    const xs = ns.map((n) => n.x ?? 0);
+    const ys = ns.map((n) => n.y ?? 0);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const rangeX = maxX - minX || 1;
+    const rangeY = maxY - minY || 1;
+    const padding = 80;
+    const width = 920 - 2 * padding;
+    const height = 560 - 2 * padding;
+    return ns.map((n) => ({
       ...n,
-      cx: ((n.x ?? 500) / 1000) * 800 + 60,
-      cy: ((n.y ?? 300) / 600) * 460 + 50,
+      cx: padding + ((n.x ?? 0) - minX) / rangeX * width,
+      cy: padding + ((n.y ?? 0) - minY) / rangeY * height,
     }));
+  };
 
   const positioned = normalizeNodes(nodes);
   const nodeMap = new Map(positioned.map((n) => [n.id, n]));

@@ -60,12 +60,29 @@ cd contracts
 pnpm install
 ```
 
-Set a deployer key that has balance on your **local** Revive dev chain. For the standard dev node, you can use one of the well-known test keys if documented, or fund an account via the node. Example (use a key you control and have funded locally):
+Set a deployer key that has balance on your **local** Revive dev chain.
+
+**Option A — Claim tokens into your deployer (recommended):** If your Revive dev node pre-funds the Alith account (many Substrate EVM dev chains do), run the claim script so that your deployer receives native token:
 
 ```bash
-export DEPLOYER_PRIVATE_KEY=0x...   # must have balance on local Revive
+pnpm run claim:revive-local   # or: npm run claim:revive-local
+```
+
+This sends token from the well-known dev account "Alith" to the address derived from `DEPLOYER_PRIVATE_KEY` in `contracts/.env`. Then deploy:
+
+```bash
 pnpm run deploy:revive-local
 ```
+
+**Option B — Use Alith as deployer:** If the chain funds Alith but you prefer not to use the Hardhat test key, set in `contracts/.env`:
+
+```
+DEPLOYER_PRIVATE_KEY=0x5fb92d6e98884f76de468fa3f6278f8807c48bebc13595d45af5bdc4da702133
+```
+
+Then run `pnpm run deploy:revive-local` (no claim step).
+
+**If deploy still fails with "Balance: 0" or "Invalid Transaction"**: the Revive dev node has not funded that EVM account. You can: (1) Use a chain spec that endows and maps an EVM account (see [Polkadot SDK genesis config](https://github.com/paritytech/polkadot-sdk/pull/8103)); or (2) Fund an account via the node, then set that key in `contracts/.env` as `DEPLOYER_PRIVATE_KEY`.
 
 This writes `contracts/deployments.json` with COGToken, AgentRegistry, TaskMarket, Reputation addresses.
 

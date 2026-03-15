@@ -55,7 +55,7 @@ cd frontend && pnpm dev
 ## Demo Flow (8-step main loop)
 
 ### Step 1: Register & Login
-- Open http://localhost:3000/dashboard
+- Open http://localhost:3001/dashboard
 - Enter a username (e.g. "alice") in the login form
 - Click "Enter Life++"
 - You are now authenticated with a JWT token
@@ -103,7 +103,7 @@ cd frontend && pnpm dev
 
 ## API Documentation
 
-Interactive Swagger UI: http://localhost:8000/docs
+Interactive Swagger UI: http://localhost:8002/docs
 
 ## Key Endpoints
 

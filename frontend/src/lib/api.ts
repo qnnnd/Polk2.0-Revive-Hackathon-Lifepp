@@ -19,7 +19,7 @@ import type {
   User,
 } from "@/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8002";
 const API_V1 = `${API_BASE}/api/v1`;
 
 let _accessToken: string | null = null;
@@ -108,6 +108,14 @@ export const authApi = {
       method: "POST",
       params: { username },
       auth: false,
+    }),
+
+  getMe: () => apiFetch<User>("/auth/me"),
+
+  updateWallet: (wallet_address: string | null) =>
+    apiFetch<User>("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ wallet_address }),
     }),
 };
 
@@ -198,6 +206,9 @@ export const marketplaceApi = {
 
   complete: (listingId: string) =>
     apiFetch<TaskListing>(`/tasks/${listingId}/complete`, { method: "POST" }),
+
+  cancel: (listingId: string) =>
+    apiFetch<TaskListing>(`/tasks/${listingId}/cancel`, { method: "POST" }),
 };
 
 export const networkApi = {
