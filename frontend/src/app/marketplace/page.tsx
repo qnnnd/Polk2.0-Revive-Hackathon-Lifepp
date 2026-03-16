@@ -168,9 +168,24 @@ function MarketplaceContent() {
         toast.info("Please confirm the transaction in your wallet to lock the IVE reward.", {
           duration: 8000,
         });
+        // Ensure the wallet that signs createTask matches the wallet bound to the current user.
+        const me = await authApi.getMe().catch(() => null);
+        const boundWallet = (me?.wallet_address ?? "").trim().toLowerCase();
+        if (!boundWallet) {
+          toast.error("Connect your wallet in the header first, then publish again.");
+          return;
+        }
         const accounts = (await window.ethereum!.request({ method: "eth_requestAccounts" })) as string[];
         if (!accounts?.[0]) {
           toast.error("No wallet account selected. Unlock MetaMask and try again.");
+          return;
+        }
+        const connected = accounts[0].toLowerCase();
+        if (connected !== boundWallet) {
+          const short = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+          toast.error(
+            `Use your bound wallet to lock the reward. Expected ${short(boundWallet)}, but MetaMask is ${short(connected)}.`
+          );
           return;
         }
         const txResult = await window.ethereum!.request({

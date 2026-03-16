@@ -143,6 +143,23 @@ async def confirm_chain_created(listing_id: uuid.UUID, body: ChainCreatedUpdate,
             status_code=400,
             detail="Could not get task id from transaction. Ensure the tx succeeded and is from createTask.",
         )
+    # Server-side guard: ensure the on-chain poster matches the user's bound wallet (when available).
+    on_chain = await asyncio.to_thread(chain_service.get_task, chain_task_id)
+    if on_chain is not None:
+        on_chain_poster = str(on_chain.get("poster", "")).lower()
+        bound_wallet = (user.wallet_address or "").strip().lower()
+        if bound_wallet and on_chain_poster and on_chain_poster != bound_wallet:
+            logger.warning(
+                "confirm_chain_created: poster wallet mismatch listing_id=%s chain_task_id=%s on_chain_poster=%s bound_wallet=%s",
+                listing.id,
+                chain_task_id,
+                on_chain_poster,
+                bound_wallet,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="On-chain task poster does not match your connected wallet. Make sure you confirmed the transaction from your bound wallet.",
+            )
     listing.chain_task_id = chain_task_id
     listing.tx_hash = body.tx_hash.strip()
     db.add(listing)
@@ -183,6 +200,24 @@ async def accept_task(
     agent = (await db.execute(select(Agent).where(Agent.id == agent_id, Agent.owner_id == user.id))).scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found or not owned by you")
+
+    # Optional guard: avoid confusing on-chain Invalid acceptor when claimer uses the same wallet as the poster.
+    if listing.chain_task_id is not None and user.wallet_address:
+        on_chain = await asyncio.to_thread(chain_service.get_task, listing.chain_task_id)
+        if on_chain is not None:
+            on_chain_poster = str(on_chain.get("poster", "")).lower()
+            claimer_wallet = user.wallet_address.strip().lower()
+            if on_chain_poster and on_chain_poster == claimer_wallet:
+                logger.warning(
+                    "accept_task: claimer wallet equals on-chain poster; rejecting to avoid Invalid acceptor. listing_id=%s chain_task_id=%s wallet=%s",
+                    listing_id,
+                    listing.chain_task_id,
+                    claimer_wallet,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="You cannot accept a task using the same wallet that created it on chain. Please switch to a different wallet.",
+                )
 
     listing.status = "accepted"
     listing.winning_agent_id = agent.id
