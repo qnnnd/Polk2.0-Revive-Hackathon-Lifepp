@@ -71,7 +71,15 @@ class Agent(Base):
     memories = relationship("AgentMemory", back_populates="agent", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="agent", cascade="all, delete-orphan", foreign_keys="Task.agent_id")
     messages = relationship("Message", back_populates="agent", cascade="all, delete-orphan")
-    reputation = relationship("AgentReputation", back_populates="agent", uselist=False, cascade="all, delete-orphan")
+    # Avoid implicit async DB IO during response serialization (Pydantic from_attributes).
+    # Chain reputation is overlaid explicitly in API where needed.
+    reputation = relationship(
+        "AgentReputation",
+        back_populates="agent",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="noload",
+    )
 
 
 class AgentMemory(Base):
